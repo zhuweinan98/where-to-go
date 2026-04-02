@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<!--
+  前端聊天页（Week 1）
+  职责：展示 UI；用 fetch POST /chat 把 message、city 发给后端；把 JSON 里的 reply 显示出来。
+  说明：样式与脚本内联在本文件，无单独打包构建。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>今天去哪玩</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      max-width: 640px;
+      margin: 48px auto;
+      padding: 0 20px 40px;
+      background: #f5f5f5;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 12px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+    label { font-size: 0.9rem; color: #555; }
+    select, input[type="text"] {
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 1rem;
+    }
+    input[type="text"] { flex: 1; min-width: 180px; }
+    .chat-box {
+      border: 1px solid #ddd;
+      padding: 16px;
+      height: 400px;
+      overflow-y: auto;
+      background: #fff;
+      border-radius: 12px;
+      margin-bottom: 12px;
+    }
+    .user {
+      color: #1890ff;
+      text-align: right;
+      padding: 10px 12px;
+      background: #e6f7ff;
+      border-radius: 10px;
+      margin: 8px 0;
+      white-space: pre-wrap;
+    }
+    .bot {
+      color: #389e0d;
+      padding: 10px 12px;
+      background: #f6ffed;
+      border-radius: 10px;
+      margin: 8px 0;
+      white-space: pre-wrap;
+    }
+    button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 8px;
+      background: #1890ff;
+      color: #fff;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .chip {
+      padding: 6px 12px;
+      border-radius: 999px;
+      border: 1px solid #d9d9d9;
+      background: #fff;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .chip:hover { border-color: #1890ff; color: #1890ff; }
+    .err { color: #cf1322; font-size: 0.875rem; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <h1>🗺️ 今天去哪玩</h1>
+  <div class="row">
+    <label for="city">城市</label>
+    <select id="city" name="city">
+      <option value="上海" selected>上海</option>
+      <option value="北京">北京</option>
+      <option value="广州">广州</option>
+    </select>
+  </div>
+  <div class="chips" id="chips">
+    <button type="button" class="chip" data-msg="你好">你好</button>
+    <button type="button" class="chip" data-msg="今天天气怎么样">今天天气</button>
+    <button type="button" class="chip" data-msg="推荐去哪里玩">推荐去哪</button>
+    <button type="button" class="chip" data-msg="下雨天推荐">雨天推荐</button>
+  </div>
+  <div class="chat-box" id="chat"></div>
+  <form id="form">
+    <div class="row">
+      <input type="text" id="message" name="message" placeholder="问点什么…" autocomplete="off" />
+      <button type="submit" id="send">发送</button>
+    </div>
+  </form>
+  <div class="err" id="err" hidden></div>
+  <script>
+    const chatEl = document.getElementById('chat');
+    const form = document.getElementById('form');
+    const messageEl = document.getElementById('message');
+    const cityEl = document.getElementById('city');
+    const sendBtn = document.getElementById('send');
+    const errEl = document.getElementById('err');
+
+    function showErr(msg) {
+      errEl.textContent = msg;
+      errEl.hidden = !msg;
+    }
+
+    async function sendMessage(text) {
+      const msg = (text ?? messageEl.value).trim();
+      if (!msg) return;
+      showErr('');
+      chatEl.innerHTML += `<p class="user">你：${escapeHtml(msg)}</p>`;
+      messageEl.value = '';
+      chatEl.scrollTop = chatEl.scrollHeight;
+      sendBtn.disabled = true;
+      try {
+        const body = new URLSearchParams();
+        body.set('message', msg);
+        body.set('city', cityEl.value);
+        const res = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+        });
+        if (!res.ok) throw new Error('请求失败：' + res.status);
+        const data = await res.json();
+        chatEl.innerHTML += `<p class="bot">助手：${escapeHtml(data.reply)}</p>`;
+      } catch (e) {
+        showErr(e.message || '网络错误');
+        chatEl.innerHTML += `<p class="bot">助手：（出错了，请稍后再试）</p>`;
+      } finally {
+        sendBtn.disabled = false;
+        chatEl.scrollTop = chatEl.scrollHeight;
+      }
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      sendMessage();
+    });
+
+    document.getElementById('chips').addEventListener('click', (e) => {
+      const t = e.target;
+      if (t.matches('.chip[data-msg]')) {
+        sendMessage(t.getAttribute('data-msg'));
+      }
+    });
+  </script>
+</body>
+</html>
