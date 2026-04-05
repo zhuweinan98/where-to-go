@@ -2,7 +2,7 @@
 
 今天去哪玩 — Week 1 可交互 Agent（规则 + Mock 数据），FastAPI 网页。
 
-架构与分层说明见 [docs/技术方案.md](docs/技术方案.md)。
+架构、Mock 与 **本地 Ollama** 的完整说明见 [docs/技术方案.md](docs/技术方案.md)（伙伴接手建议先读该文档）。
 
 ## 环境
 
@@ -14,6 +14,13 @@ python3.14 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
+
+## 本地 Ollama（可选）
+
+1. 安装并打开 [Ollama](https://ollama.com/)，拉模型：`ollama pull qwen3:4b`（模型名需与 `OLLAMA_MODEL` 一致，可自选其它已拉取的模型）。
+2. **`.env` 已加入 `.gitignore`**，每位开发者本地自建：复制 `cp .env.example .env`，按文件内说明填写 `LLM_MODE=ollama` 与 `OLLAMA_MODEL`。
+3. **单测 / CI**：使用 `LLM_MODE=off` 或不设置，避免依赖本机 Ollama。
+4. 细节（调用链、`build_system_prompt`、Railway 注意点）见 [docs/技术方案.md](docs/技术方案.md) 中的「本地 Ollama」一节。
 
 ## 终端对话（Agent）
 

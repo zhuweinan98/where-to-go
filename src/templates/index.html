@@ -121,6 +121,9 @@
       messageEl.value = '';
       chatEl.scrollTop = chatEl.scrollHeight;
       sendBtn.disabled = true;
+      const loadingId = 'bot-loading-' + Date.now();
+      chatEl.innerHTML += `<p class="bot" id="${loadingId}">助手：思考中…（本地模型可能较慢，请稍等）</p>`;
+      chatEl.scrollTop = chatEl.scrollHeight;
       try {
         const body = new URLSearchParams();
         body.set('message', msg);
@@ -132,8 +135,12 @@
         });
         if (!res.ok) throw new Error('请求失败：' + res.status);
         const data = await res.json();
-        chatEl.innerHTML += `<p class="bot">助手：${escapeHtml(data.reply)}</p>`;
+        document.getElementById(loadingId)?.remove();
+        const raw = data.reply != null ? String(data.reply) : '';
+        const replyText = raw.trim() ? raw : '（没有收到回复内容）';
+        chatEl.innerHTML += `<p class="bot">助手：${escapeHtml(replyText)}</p>`;
       } catch (e) {
+        document.getElementById(loadingId)?.remove();
         showErr(e.message || '网络错误');
         chatEl.innerHTML += `<p class="bot">助手：（出错了，请稍后再试）</p>`;
       } finally {

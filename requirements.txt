@@ -8,6 +8,9 @@ python-multipart>=0.0.6
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 
+# LLM（Ollama / OpenAI 兼容云端共用 openai 客户端）
+openai>=1.40.0
+
 # Dev
 pytest>=7.4.0
 black>=23.0.0

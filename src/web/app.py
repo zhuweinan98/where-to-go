@@ -6,6 +6,7 @@
 作用：把浏览器/接口与 bot 里的 Agent 逻辑连接起来。
 """
 
+import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
@@ -32,5 +33,6 @@ async def home(request: Request) -> HTMLResponse:
 async def chat_endpoint(message: str = Form(...), city: str = Form("上海")) -> dict:
     """聊天接口：接收表单里的 message、city，交给 chat()，JSON 返回 reply。"""
     c = (city or "上海").strip() or "上海"
-    reply = chat(message, city=c)
+    # chat() 内含同步 HTTP，放到线程里避免长时间阻塞事件循环（否则看起来像「卡住无响应」）
+    reply = await asyncio.to_thread(chat, message, c)
     return {"reply": reply}
