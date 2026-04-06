@@ -107,6 +107,9 @@
     const cityEl = document.getElementById('city');
     const sendBtn = document.getElementById('send');
     const errEl = document.getElementById('err');
+    const LOADING_HINT = {{ llm_loading_hint_json | safe }};
+    const INITIAL_MESSAGE = {{ initial_message_json | safe }};
+    const INITIAL_CITY = {{ initial_city_json | safe }};
 
     function showErr(msg) {
       errEl.textContent = msg;
@@ -122,7 +125,7 @@
       chatEl.scrollTop = chatEl.scrollHeight;
       sendBtn.disabled = true;
       const loadingId = 'bot-loading-' + Date.now();
-      chatEl.innerHTML += `<p class="bot" id="${loadingId}">助手：思考中…（本地模型可能较慢，请稍等）</p>`;
+      chatEl.innerHTML += `<p class="bot" id="${loadingId}">${escapeHtml(LOADING_HINT)}</p>`;
       chatEl.scrollTop = chatEl.scrollHeight;
       try {
         const body = new URLSearchParams();
@@ -166,6 +169,22 @@
         sendMessage(t.getAttribute('data-msg'));
       }
     });
+
+    // 从地址栏 ?message= &city= 带入（UTF-8 百分号编码由服务端已解码；与 uvicorn 日志里的 %XX 不是同一层）
+    (function applyQueryDefaults() {
+      if (INITIAL_CITY) {
+        for (const opt of cityEl.options) {
+          if (opt.value === INITIAL_CITY) {
+            cityEl.value = INITIAL_CITY;
+            break;
+          }
+        }
+      }
+      if (INITIAL_MESSAGE) {
+        messageEl.value = INITIAL_MESSAGE;
+        sendMessage(INITIAL_MESSAGE);
+      }
+    })();
   </script>
 </body>
 </html>

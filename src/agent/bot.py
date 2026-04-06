@@ -3,9 +3,11 @@
 职责：读用户话与城市，结合 Mock 数据生成一句回复。
 作用：终端与 Web 共用同一套逻辑（import chat）。
 
-默认仅规则引擎（单测依赖）；LLM_MODE=ollama 时走本地 Ollama。天气/推荐规则在本地 LLM
-测通、愿意改为纯模型行为之前保留，勿删。
+默认仅规则引擎（单测依赖）；LLM_MODE=ollama 走本地 Ollama，LLM_MODE=openai 走云端 OpenAI 兼容 API。
+天气/推荐规则在愿意改为纯模型行为之前保留，勿删。
 """
+
+import os
 
 from dotenv import load_dotenv
 
@@ -81,16 +83,11 @@ def chat(user_input: str, city: str = "上海") -> str:
     text = user_input.strip()
     form_city = (city or "上海").strip() or "上海"
     c = _effective_city(text, form_city)
-    if llm_mod.cloud_mode_requested():
-        return (
-            "云端大模型已预留环境变量位（OPENAI_*），尚未接入；"
-            "请先用 LLM_MODE=ollama 接本地，或改回 off 使用规则回复。"
-        )
     if llm_mod.llm_enabled():
         weather = get_weather_for_city(c)
         system = llm_mod.build_system_prompt(c, weather, MOCK_PLACES)
         try:
-            out = llm_mod.complete(system, text)
+            out = llm_mod.complete(system, text, city=c)
             return out if out.strip() else "（模型没有返回文字，请重试或缩短问题。）"
         except Exception as e:
             return f"模型暂时不可用：{e}"
@@ -124,7 +121,10 @@ def main() -> None:
         if user.strip().lower() in ("quit", "exit", "q"):
             break
         if llm_mod.llm_enabled() and user.strip():
-            print("(正在请求本地 Ollama，首次可能需几十秒到数分钟，请稍候…)", flush=True)
+            if os.getenv("LLM_MODE", "off").strip().lower() == "openai":
+                print("(正在请求云端模型，请稍候…)", flush=True)
+            else:
+                print("(正在请求本地 Ollama，首次可能较慢，请稍候…)", flush=True)
         reply = chat(user)
         print(f"助手：{reply}")
 

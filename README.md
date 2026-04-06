@@ -20,7 +20,8 @@ pip install -r requirements.txt
 1. 安装并打开 [Ollama](https://ollama.com/)，拉模型：`ollama pull qwen3:4b`（模型名需与 `OLLAMA_MODEL` 一致，可自选其它已拉取的模型）。
 2. **`.env` 已加入 `.gitignore`**，每位开发者本地自建：复制 `cp .env.example .env`，按文件内说明填写 `LLM_MODE=ollama` 与 `OLLAMA_MODEL`。
 3. **单测 / CI**：使用 `LLM_MODE=off` 或不设置，避免依赖本机 Ollama。
-4. 细节（调用链、`build_system_prompt`、Railway 注意点）见 [docs/技术方案.md](docs/技术方案.md) 中的「本地 Ollama」一节。
+4. **云端大模型（Railway 等）**：`LLM_MODE=openai`，并配置 `OPENAI_API_KEY`、`OPENAI_BASE_URL`（可选）、`OPENAI_MODEL`（可选）；与 OpenAI 兼容的国内 API 同样可用。
+5. 细节见 [docs/技术方案.md](docs/技术方案.md) 中的「大模型」一节。
 
 ## 和风天气（可选）
 
@@ -70,3 +71,17 @@ curl -s -X POST http://127.0.0.1:8000/chat \
 2. **Start Command**：`uvicorn src.web.app:app --host 0.0.0.0 --port $PORT`  
    （若已识别 `Procfile` 中的 `web` 进程，可与 Dashboard 配置二选一。）
 3. 生成公网域名后访问根路径即可聊天。
+4. **Variables（环境变量）**：在服务的 **Variables** 里添加（**不要**把密钥写进仓库；Railway 里填的值等同于本机 `.env`）：
+
+   | 变量 | 说明 |
+   |------|------|
+   | `LLM_MODE` | 线上建议 `openai`（容器内无法跑 Ollama）。仅用规则 + Mock 时设 `off`。 |
+   | `OPENAI_API_KEY` | 必填（当 `openai` 时）：DeepSeek / OpenAI 等平台的密钥。 |
+   | `OPENAI_BASE_URL` | DeepSeek 示例：`https://api.deepseek.com`；官方 OpenAI 可省略（默认 `https://api.openai.com`）。 |
+   | `OPENAI_MODEL` | DeepSeek 示例：`deepseek-chat`；官方示例：`gpt-4o-mini`。 |
+   | `OPENAI_HTTP_TIMEOUT` | 可选，秒，默认 `120`。 |
+   | `LLM_DEBUG` | 可选：设 `1` 可在 **Deploy Logs** 里看到 `[llm]` 调试行。 |
+   | `QWEATHER_HOST` / `QWEATHER_KEY` | 可选：与本地相同，不配则天气回退 Mock。 |
+   | `QWEATHER_DEBUG` | 可选：设 `1` 在日志里打印 `[qweather]`。 |
+
+   Railway 会自动注入 **`PORT`**，无需手写；也勿在变量里提交 `.env` 文件内容到 Git。
