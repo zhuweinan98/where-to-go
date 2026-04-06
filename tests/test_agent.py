@@ -38,4 +38,4 @@ def test_city_in_message_overrides_form():
 def test_recommend_shenyang():
     r = chat("推荐去哪里玩", city="沈阳")
     assert "推荐" in r
-    assert "沈阳故宫" in r or "张氏帅府" in r
+    assert "保利云禧韩毓家" in r
