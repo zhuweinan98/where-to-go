@@ -8,7 +8,7 @@ import json
 import os
 from typing import Any
 
-from openai import OpenAI
+from openai import APIConnectionError, APITimeoutError, OpenAI
 
 
 def _mode() -> str:
@@ -66,12 +66,27 @@ def build_system_prompt(city: str, weather: dict[str, Any], places: list[dict[st
 def complete(system: str, user: str) -> str:
     """调用当前配置的模型，返回助手正文。"""
     client, model = _client_and_model()
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-    )
+    base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").strip()
+    v1 = _normalize_v1_base(base)
+    try:
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+    except APIConnectionError as e:
+        raise RuntimeError(
+            "连不上 Ollama。请确认：1) 本机已打开 Ollama（菜单栏有图标）；"
+            "2) 终端执行 curl -s http://127.0.0.1:11434/api/tags 有 JSON；"
+            "3) .env 里 OLLAMA_BASE_URL 为 http://127.0.0.1:11434（不要用 https）；"
+            "4) 若开了系统/Clash 代理，对 127.0.0.1 设 NO_PROXY 或关闭代理。"
+            f" 当前请求基址：{v1}。详情：{e}"
+        ) from e
+    except APITimeoutError as e:
+        raise RuntimeError(
+            "Ollama 请求超时。可尝试增大环境变量 OLLAMA_HTTP_TIMEOUT，或减少并发、换更小模型。"
+        ) from e
     msg = resp.choices[0].message.content
     return (msg or "").strip()

@@ -24,3 +24,12 @@ def test_recommend():
 def test_rain_indoor_guangzhou():
     r = chat("推荐", city="广州")
     assert "美术馆" in r
+
+
+def test_city_in_message_overrides_form():
+    """话里带城市名时覆盖表单默认（如仍选上海但说北京）。"""
+    r = chat("今天天气怎么样", city="上海")
+    assert "上海" in r
+    r2 = chat("北京今天天气怎么样", city="上海")
+    assert r2.startswith("今天北京")
+    assert "°C" in r2

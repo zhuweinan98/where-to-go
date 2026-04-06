@@ -22,6 +22,10 @@ pip install -r requirements.txt
 3. **单测 / CI**：使用 `LLM_MODE=off` 或不设置，避免依赖本机 Ollama。
 4. 细节（调用链、`build_system_prompt`、Railway 注意点）见 [docs/技术方案.md](docs/技术方案.md) 中的「本地 Ollama」一节。
 
+## 和风天气（可选）
+
+在 `.env` 中配置 `QWEATHER_HOST` 与 `QWEATHER_KEY`（控制台 **API KEY** 凭据）后，天气与「推荐」分支会按实况判断晴雨；未配置或请求失败时使用 Mock（失败时**不会**在界面报错，所以容易误以为没调 API）。可在 `.env` 加 **`QWEATHER_DEBUG=1`**，重启后在 **uvicorn 终端** 会打印以 `[qweather]` 开头的行（直接 stdout，不依赖 logging 配置）。说明见 [docs/技术方案.md](docs/技术方案.md) 中的「和风天气」一节。
+
 ## 终端对话（Agent）
 
 ```bash
