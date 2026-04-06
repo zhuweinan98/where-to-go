@@ -66,13 +66,17 @@ def _client_and_model() -> tuple[OpenAI, str]:
 
 
 def build_system_prompt(city: str, weather: dict[str, Any], places: list[dict[str, Any]]) -> str:
+    allowed = [str(p.get("name", "")).strip() for p in places if str(p.get("name", "")).strip()]
+    allowed_line = "、".join(allowed) if allowed else "（暂无）"
     return (
         "你是「今天去哪玩」助手。回答简洁、口语化，使用简体中文。\n"
         f"用户当前选择的城市：{city}。\n"
-        "以下 JSON 是应用内的模拟数据，仅作参考，不要编造列表外地点：\n"
+        "以下为应用内唯一可信数据源，不得推荐、暗示或编造其中不存在的景点名称：\n"
         f"weather: {json.dumps(weather, ensure_ascii=False)}\n"
         f"places: {json.dumps(places, ensure_ascii=False)}\n"
-        "若问天气，结合 weather；若问推荐或去哪，结合天气从 places 里挑选并说明理由。"
+        f"允许出现的景点名（须与 places 中 name 一致，不可改写为别称）：{allowed_line}\n"
+        "若问天气，只依据 weather；若问推荐或去哪，只能从上述 name 中选一处或多处，并结合天气说明理由。"
+        "禁止补充列表外的商场、网红店或其它城市景点。"
     )
 
 

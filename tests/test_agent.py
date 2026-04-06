@@ -33,3 +33,9 @@ def test_city_in_message_overrides_form():
     r2 = chat("北京今天天气怎么样", city="上海")
     assert r2.startswith("今天北京")
     assert "°C" in r2
+
+
+def test_recommend_shenyang():
+    r = chat("推荐去哪里玩", city="沈阳")
+    assert "推荐" in r
+    assert "沈阳故宫" in r or "张氏帅府" in r

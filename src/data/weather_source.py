@@ -1,4 +1,4 @@
-"""天气数据：配置和风 QWeather 时用实时接口，否则回退 Mock。
+"""天气数据：配置和风 QWeather 时用实时接口，否则回退 ``cities_config.MOCK_WEATHER``（来自 ``config/cities.json``）。
 
 认证（二选一，均需 ``QWEATHER_HOST``）：
 
@@ -17,7 +17,7 @@ from typing import Any
 
 import httpx
 
-from src.data.mock import MOCK_WEATHER
+from src.data.cities_config import CITY_TO_LOCATION_ID, MOCK_WEATHER
 
 
 def _weather_debug() -> bool:
@@ -28,13 +28,7 @@ def _dlog(msg: str) -> None:
     """QWEATHER_DEBUG 时直接打到 stdout，避免 uvicorn 默认不展示第三方 logger.info。"""
     print(f"[qweather] {msg}", flush=True)
 
-# 常用城市免打 GeoAPI，减少请求；其余城市走 /geo/v2/city/lookup 动态解析并缓存
-CITY_TO_LOCATION_ID: dict[str, str] = {
-    "上海": "101020100",
-    "北京": "101010100",
-    "广州": "101280101",
-}
-
+# CITY_TO_LOCATION_ID 由 config/cities.json 加载；其余城市走 /geo/v2/city/lookup 动态解析并缓存
 _geo_id_cache: dict[str, str] = {}
 
 

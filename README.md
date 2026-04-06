@@ -15,6 +15,10 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+## 城市列表（`config/cities.json`）
+
+**一份 JSON** 同时驱动：用户话里匹配城名、和风静态 LocationID（可选填）、无 API 时的 Mock 天气回退。新增城市只改此文件；`src/data/mock.py` 里景点的 `city` 必须出现在列表中。
+
 ## 本地 Ollama（可选）
 
 1. 安装并打开 [Ollama](https://ollama.com/)，拉模型：`ollama pull qwen3:4b`（模型名需与 `OLLAMA_MODEL` 一致，可自选其它已拉取的模型）。
