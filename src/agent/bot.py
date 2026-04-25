@@ -3,8 +3,12 @@
 职责：读用户话与城市，结合 Mock 数据生成一句回复。
 作用：终端与 Web 共用同一套逻辑（import chat）。
 
-默认仅规则引擎（单测依赖）；LLM_MODE=ollama 走本地 Ollama，LLM_MODE=openai 走云端 OpenAI 兼容 API。
-天气/推荐规则在愿意改为纯模型行为之前保留，勿删。
+默认仅规则引擎（单测依赖）；LLM_MODE=ollama / openai 时：
+
+- LLM_CLIENT=langchain（默认）：Function Calling，由模型调用 get_weather / list_places。
+- LLM_CLIENT=openai_sdk：预取天气与景点进 system，单次 chat.completions（Week1 行为）。
+
+天气/推荐规则在 LLM_MODE=off 时保留，勿删。
 """
 
 import os
@@ -41,10 +45,16 @@ def chat(user_input: str, city: str = "上海") -> str:
     form_city = (city or "上海").strip() or "上海"
     c = _effective_city(text, form_city)
     if llm_mod.llm_enabled():
-        weather = get_weather_for_city(c)
-        system = llm_mod.build_system_prompt(c, weather, places_for_city(c))
+        client_kind = os.getenv("LLM_CLIENT", "langchain").strip().lower()
         try:
-            out = llm_mod.complete(system, text, city=c)
+            if client_kind == "openai_sdk":
+                weather = get_weather_for_city(c)
+                system = llm_mod.build_system_prompt(c, weather, places_for_city(c))
+                out = llm_mod.complete(system, text, city=c)
+            else:
+                from src.agent.langchain_fc import chat_with_tools
+
+                out = chat_with_tools(text, c)
             return out if out.strip() else "（模型没有返回文字，请重试或缩短问题。）"
         except Exception as e:
             return f"模型暂时不可用：{e}"

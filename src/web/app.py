@@ -22,7 +22,7 @@ def _llm_loading_hint() -> str:
     """首页「思考中」文案：与 LLM_MODE 一致（bot 已 load_dotenv）。"""
     m = os.getenv("LLM_MODE", "off").strip().lower()
     if m == "ollama":
-        return "助手：思考中…（本地模型可能较慢，请稍等）"
+        return "助手：思考中…（本地 Ollama，含工具调用可能较慢，请稍等）"
     if m == "openai":
         return "助手：思考中…（正在请求云端模型，请稍等）"
     return "助手：思考中…"
