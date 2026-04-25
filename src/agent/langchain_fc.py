@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Callable
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
@@ -50,6 +50,19 @@ def _clip_text(s: Any, limit: int = 180) -> str:
     if len(txt) <= limit:
         return txt
     return f"{txt[:limit]}...(len={len(txt)})"
+
+
+def _add_trace(
+    trace: list[dict[str, Any]] | None,
+    trace_hook: Callable[[dict[str, Any]], None] | None,
+    event: str,
+    **data: Any,
+) -> None:
+    item = {"event": event, **data}
+    if trace is not None:
+        trace.append(item)
+    if trace_hook is not None:
+        trace_hook(item)
 
 
 def _normalize_v1_base(url: str) -> str:
@@ -110,7 +123,13 @@ def _tool_call_args(tc: Any) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
-def chat_with_tools(user_text: str, city: str) -> str:
+def chat_with_tools(
+    user_text: str,
+    city: str,
+    *,
+    trace: list[dict[str, Any]] | None = None,
+    trace_hook: Callable[[dict[str, Any]], None] | None = None,
+) -> str:
     """多轮 tool 循环，返回助手最终正文。"""
     info = _get_chat_model_client_info()
     mode = info["mode"]
@@ -121,6 +140,15 @@ def chat_with_tools(user_text: str, city: str) -> str:
 
     _llm_debug(
         f"已走 LangChain FC，默认城市={city!r}（用户文本可覆盖），model={info['model']!r} → base_url={info['base_url']}"
+    )
+    _add_trace(
+        trace,
+        trace_hook,
+        "fc_start",
+        default_city=city,
+        mode=info["mode"],
+        model=info["model"],
+        base_url=info["base_url"],
     )
 
     llm = ChatOpenAI(
@@ -139,20 +167,42 @@ def chat_with_tools(user_text: str, city: str) -> str:
         for i in range(_MAX_TOOL_ROUNDS):
             ai: AIMessage = llm_tools.invoke(messages)
             messages.append(ai)
-            _llm_debug(
-                f"[fc] round={i + 1} assistant_content={_clip_text(ai.content)}"
+            _add_trace(
+                trace,
+                trace_hook,
+                "assistant_round",
+                round=i + 1,
+                assistant_content=_clip_text(ai.content),
+                tool_calls_count=len(ai.tool_calls or []),
             )
+            _llm_debug(f"[fc] round={i + 1} assistant_content={_clip_text(ai.content)}")
             _llm_debug(
                 f"[fc] round={i + 1} 模型返回 tool_calls 数量={len(ai.tool_calls or [])}（>0 表示将进入工具执行）"
             )
             if not ai.tool_calls:
                 out = (ai.content or "").strip()
                 _llm_debug(f"[fc] round={i + 1} final={_clip_text(out)}")
+                _add_trace(
+                    trace,
+                    trace_hook,
+                    "final_answer",
+                    round=i + 1,
+                    content=_clip_text(out),
+                )
                 return out if out else "（模型没有返回文字，请重试或缩短问题。）"
             for tc in ai.tool_calls:
                 name = _tool_call_field(tc, "name")
                 tid = _tool_call_field(tc, "id")
                 args = _tool_call_args(tc)
+                _add_trace(
+                    trace,
+                    trace_hook,
+                    "tool_call",
+                    round=i + 1,
+                    name=name,
+                    id=tid,
+                    args=args,
+                )
                 _llm_debug(f"[fc] tool_call name={name!r} id={tid!r} args={args}")
                 tool_fn = _TOOL_MAP.get(name)
                 if tool_fn is None:
@@ -162,6 +212,14 @@ def chat_with_tools(user_text: str, city: str) -> str:
                     _llm_debug(
                         f"[fc] tool_error name={name!r} error={_clip_text(payload)}"
                     )
+                    _add_trace(
+                        trace,
+                        trace_hook,
+                        "tool_error",
+                        round=i + 1,
+                        name=name,
+                        error=_clip_text(payload),
+                    )
                     messages.append(ToolMessage(content=payload, tool_call_id=tid))
                     continue
                 try:
@@ -169,12 +227,29 @@ def chat_with_tools(user_text: str, city: str) -> str:
                     _llm_debug(
                         f"[fc] tool_result name={name!r} result={_clip_text(result)}"
                     )
+                    _add_trace(
+                        trace,
+                        trace_hook,
+                        "tool_result",
+                        round=i + 1,
+                        name=name,
+                        result=_clip_text(result),
+                    )
                 except Exception as e:
                     result = f'{{"error": "工具执行失败: {e}"}}'
                     _llm_debug(
                         f"[fc] tool_exception name={name!r} error={_clip_text(result)}"
                     )
+                    _add_trace(
+                        trace,
+                        trace_hook,
+                        "tool_exception",
+                        round=i + 1,
+                        name=name,
+                        error=_clip_text(result),
+                    )
                 messages.append(ToolMessage(content=str(result), tool_call_id=tid))
+        _add_trace(trace, trace_hook, "max_rounds_reached", max_rounds=_MAX_TOOL_ROUNDS)
         return "（工具调用轮数过多，请简化问题后重试。）"
     except APIConnectionError as e:
         if mode == "ollama":

@@ -80,6 +80,32 @@
       background: #e6f7ff;
     }
     .err { color: #cf1322; font-size: 0.875rem; margin-top: 8px; }
+    .debug-panel {
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      background: #fff;
+      margin-top: 12px;
+      overflow: hidden;
+    }
+    .debug-panel summary {
+      cursor: pointer;
+      padding: 10px 12px;
+      font-weight: 600;
+      color: #595959;
+      background: #fafafa;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .debug-log {
+      margin: 0;
+      padding: 10px 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      color: #262626;
+      max-height: 240px;
+      overflow-y: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
   </style>
 </head>
 <body>
@@ -109,6 +135,10 @@
     </div>
   </form>
   <div class="err" id="err" hidden></div>
+  <details class="debug-panel" id="debug-panel" open>
+    <summary>调试日志（最近一次请求）</summary>
+    <pre class="debug-log" id="debug-log">暂无调试数据</pre>
+  </details>
   <script>
     const chatEl = document.getElementById('chat');
     const form = document.getElementById('form');
@@ -116,9 +146,13 @@
     const cityEl = document.getElementById('city');
     const sendBtn = document.getElementById('send');
     const errEl = document.getElementById('err');
+    const debugLogEl = document.getElementById('debug-log');
+    const debugPanelEl = document.getElementById('debug-panel');
     const LOADING_HINT = {{ llm_loading_hint_json | safe }};
     const INITIAL_MESSAGE = {{ initial_message_json | safe }};
     const INITIAL_CITY = {{ initial_city_json | safe }};
+    const LLM_DEBUG_ENABLED = {{ llm_debug_enabled_json | safe }};
+    if (!LLM_DEBUG_ENABLED) debugPanelEl.hidden = true;
 
     function showErr(msg) {
       errEl.textContent = msg;
@@ -137,22 +171,19 @@
       chatEl.innerHTML += `<p class="bot" id="${loadingId}">${escapeHtml(LOADING_HINT)}</p>`;
       chatEl.scrollTop = chatEl.scrollHeight;
       try {
-        const body = new URLSearchParams();
-        body.set('message', msg);
-        body.set('city', cityEl.value);
-        const res = await fetch('/chat', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: body.toString(),
-        });
-        if (!res.ok) throw new Error('请求失败：' + res.status);
-        const data = await res.json();
+        const data = LLM_DEBUG_ENABLED
+          ? await sendMessageStream(msg, cityEl.value)
+          : await sendMessagePlain(msg, cityEl.value);
         document.getElementById(loadingId)?.remove();
+        if (LLM_DEBUG_ENABLED) renderDebugTrace(data.debug_trace);
         const raw = data.reply != null ? String(data.reply) : '';
         const replyText = raw.trim() ? raw : '（没有收到回复内容）';
         chatEl.innerHTML += `<p class="bot">助手：${escapeHtml(replyText)}</p>`;
       } catch (e) {
         document.getElementById(loadingId)?.remove();
+        if (LLM_DEBUG_ENABLED) {
+          renderDebugTrace([{ event: 'frontend_error', message: String(e.message || '网络错误') }]);
+        }
         showErr(e.message || '网络错误');
         chatEl.innerHTML += `<p class="bot">助手：（出错了，请稍后再试）</p>`;
       } finally {
@@ -161,10 +192,132 @@
       }
     }
 
+    function sendMessageStream(msg, city) {
+      return new Promise((resolve, reject) => {
+        const trace = [];
+        let done = false;
+        const url = `/chat/stream?message=${encodeURIComponent(msg)}&city=${encodeURIComponent(city)}`;
+        const es = new EventSource(url);
+
+        es.addEventListener('trace', (ev) => {
+          try {
+            const item = JSON.parse(ev.data);
+            trace.push(item);
+            renderDebugTrace(trace);
+          } catch (_) {
+            // ignore parse error for malformed event payload
+          }
+        });
+
+        es.addEventListener('final', (ev) => {
+          done = true;
+          es.close();
+          try {
+            const payload = JSON.parse(ev.data);
+            resolve({ reply: payload.reply ?? '', debug_trace: trace });
+          } catch (e) {
+            reject(new Error('解析最终回复失败'));
+          }
+        });
+
+        es.addEventListener('error', () => {
+          if (done) return;
+          es.close();
+          reject(new Error('流式连接中断，请重试'));
+        });
+      });
+    }
+
+    async function sendMessagePlain(msg, city) {
+      const body = new URLSearchParams();
+      body.set('message', msg);
+      body.set('city', city);
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: body.toString(),
+      });
+      if (!res.ok) throw new Error('请求失败：' + res.status);
+      return await res.json();
+    }
+
     function escapeHtml(s) {
       return s.replace(/[&<>"']/g, (c) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
       }[c]));
+    }
+
+    function renderDebugTrace(trace) {
+      if (!Array.isArray(trace) || trace.length === 0) {
+        debugLogEl.textContent = '暂无调试数据';
+        debugLogEl.scrollTop = debugLogEl.scrollHeight;
+        return;
+      }
+      debugPanelEl.open = true;
+      debugLogEl.textContent = trace
+        .map((item, idx) => `${String(idx + 1).padStart(2, '0')} | ${formatTraceItem(item)}`)
+        .join('\n');
+      debugLogEl.scrollTop = debugLogEl.scrollHeight;
+    }
+
+    function formatTraceItem(item) {
+      const ev = item?.event || 'unknown';
+      if (ev === 'city_resolved') {
+        return `城市解析: 表单=${safe(item.form_city)} -> 生效=${safe(item.effective_city)}`;
+      }
+      if (ev === 'llm_route') {
+        return `路由: LLM_CLIENT=${safe(item.client_kind)}`;
+      }
+      if (ev === 'fc_start') {
+        return `FC启动: mode=${safe(item.mode)} model=${safe(item.model)} base=${safe(item.base_url)} 默认城市=${safe(item.default_city)}`;
+      }
+      if (ev === 'assistant_round') {
+        return `第${safe(item.round)}轮 assistant: tool_calls=${safe(item.tool_calls_count)} content=${safe(item.assistant_content)}`;
+      }
+      if (ev === 'tool_call') {
+        return `调用工具: ${safe(item.name)} args=${safeJson(item.args)}`;
+      }
+      if (ev === 'tool_result') {
+        return `工具结果: ${safe(item.name)} -> ${safe(item.result)}`;
+      }
+      if (ev === 'tool_error' || ev === 'tool_exception') {
+        return `工具异常: ${safe(item.name)} -> ${safe(item.error)}`;
+      }
+      if (ev === 'final_answer') {
+        return `最终回答(第${safe(item.round)}轮): ${safe(item.content)}`;
+      }
+      if (ev === 'legacy_complete') {
+        return `旧链路完成: mode=${safe(item.mode)}`;
+      }
+      if (ev === 'llm_error') {
+        return `LLM错误: ${safe(item.error)}`;
+      }
+      if (ev === 'rule_weather') {
+        return '规则分支: 天气回复';
+      }
+      if (ev === 'rule_recommend') {
+        return `规则分支: 推荐回复(is_rain=${safe(item.is_rain)})`;
+      }
+      if (ev === 'max_rounds_reached') {
+        return `达到最大轮数: ${safe(item.max_rounds)}`;
+      }
+      if (ev === 'frontend_error') {
+        return `前端错误: ${safe(item.message)}`;
+      }
+      return `${ev}: ${safeJson(item)}`;
+    }
+
+    function safe(v) {
+      if (v === null || v === undefined) return '-';
+      return String(v);
+    }
+
+    function safeJson(v) {
+      try {
+        return JSON.stringify(v, null, 0);
+      } catch (_) {
+        return String(v);
+      }
     }
 
     form.addEventListener('submit', (e) => {

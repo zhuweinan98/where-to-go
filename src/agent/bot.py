@@ -12,6 +12,7 @@
 """
 
 import os
+from typing import Any, Callable
 
 from dotenv import load_dotenv
 
@@ -39,33 +40,62 @@ def _effective_city(user_text: str, form_city: str) -> str:
     return hits[0][1]
 
 
-def chat(user_input: str, city: str = "上海") -> str:
+def _append_trace(
+    debug_trace: list[dict[str, Any]] | None,
+    trace_hook: Callable[[dict[str, Any]], None] | None,
+    event: str,
+    **data: Any,
+) -> None:
+    item = {"event": event, **data}
+    if debug_trace is not None:
+        debug_trace.append(item)
+    if trace_hook is not None:
+        trace_hook(item)
+
+
+def chat(
+    user_input: str,
+    city: str = "上海",
+    *,
+    debug_trace: list[dict[str, Any]] | None = None,
+    trace_hook: Callable[[dict[str, Any]], None] | None = None,
+) -> str:
     """Agent 主入口：输入用户原话与城市，返回助手回复文本。"""
     text = user_input.strip()
     form_city = (city or "上海").strip() or "上海"
     c = _effective_city(text, form_city)
+    _append_trace(
+        debug_trace, trace_hook, "city_resolved", form_city=form_city, effective_city=c
+    )
     if llm_mod.llm_enabled():
         client_kind = os.getenv("LLM_CLIENT", "langchain").strip().lower()
+        _append_trace(debug_trace, trace_hook, "llm_route", client_kind=client_kind)
         try:
             if client_kind == "openai_sdk":
                 weather = get_weather_for_city(c)
                 system = llm_mod.build_system_prompt(c, weather, places_for_city(c))
                 out = llm_mod.complete(system, text, city=c)
+                _append_trace(
+                    debug_trace, trace_hook, "legacy_complete", mode="openai_sdk"
+                )
             else:
                 from src.agent.langchain_fc import chat_with_tools
 
-                out = chat_with_tools(text, c)
+                out = chat_with_tools(text, c, trace=debug_trace, trace_hook=trace_hook)
             return out if out.strip() else "（模型没有返回文字，请重试或缩短问题。）"
         except Exception as e:
+            _append_trace(debug_trace, trace_hook, "llm_error", error=str(e))
             return f"模型暂时不可用：{e}"
 
     if "天气" in text:
         weather = get_weather_for_city(c)
+        _append_trace(debug_trace, trace_hook, "rule_weather")
         return f"今天{c}{weather['weather']}，{weather['temp']}°C"
 
     if "推荐" in text or "去哪" in text:
         w = get_weather_for_city(c)
         is_rain = "雨" in text or "雨" in str(w.get("weather", ""))
+        _append_trace(debug_trace, trace_hook, "rule_recommend", is_rain=is_rain)
         local = places_for_city(c)
         if is_rain:
             places = [p for p in local if p["type"] in ("美术馆", "博物馆")]
