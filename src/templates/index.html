@@ -263,10 +263,10 @@
     function formatTraceItem(item) {
       const ev = item?.event || 'unknown';
       if (ev === 'city_resolved') {
-        return `城市解析: 表单=${safe(item.form_city)} -> 生效=${safe(item.effective_city)}`;
+        return `城市解析: 生效=${safe(item.effective_city)}`;
       }
       if (ev === 'llm_route') {
-        return `路由: LLM_CLIENT=${safe(item.client_kind)}`;
+        return `路由: ${safe(item.client_kind)}`;
       }
       if (ev === 'fc_start') {
         return `FC启动: mode=${safe(item.mode)} model=${safe(item.model)} base=${safe(item.base_url)} 默认城市=${safe(item.default_city)}`;
@@ -286,17 +286,11 @@
       if (ev === 'final_answer') {
         return `最终回答(第${safe(item.round)}轮): ${safe(item.content)}`;
       }
-      if (ev === 'legacy_complete') {
-        return `旧链路完成: mode=${safe(item.mode)}`;
-      }
       if (ev === 'llm_error') {
         return `LLM错误: ${safe(item.error)}`;
       }
-      if (ev === 'rule_weather') {
-        return '规则分支: 天气回复';
-      }
-      if (ev === 'rule_recommend') {
-        return `规则分支: 推荐回复(is_rain=${safe(item.is_rain)})`;
+      if (ev === 'rule_off') {
+        return '规则关闭: 当前为 LLM_MODE=off 兜底提示';
       }
       if (ev === 'max_rounds_reached') {
         return `达到最大轮数: ${safe(item.max_rounds)}`;

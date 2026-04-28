@@ -1,6 +1,6 @@
 """LangChain + Function Calling：由模型决定是否调用天气 / 景点工具。
 
-仅在 ``LLM_MODE`` 为 ``ollama`` / ``openai`` 且 ``LLM_CLIENT=langchain``（默认）时由 ``bot.chat`` 调用。
+仅在 ``LLM_MODE`` 为 ``ollama`` / ``openai`` 时由 ``bot.chat`` 调用。
 """
 
 from __future__ import annotations
@@ -14,7 +14,11 @@ from langchain_openai import ChatOpenAI
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
 from src.agent.agent_tools import get_weather_json, list_places_json
-from src.agent.llm import _llm_debug
+
+
+def _llm_debug(msg: str) -> None:
+    if os.getenv("LLM_DEBUG", "").strip().lower() in ("1", "true", "yes"):
+        print(f"[llm] {msg}", flush=True)
 
 
 def _fc_system_prompt(city: str) -> str:
