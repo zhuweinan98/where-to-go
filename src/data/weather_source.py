@@ -5,7 +5,7 @@
 - **API KEY**：``QWEATHER_KEY``；``QWEATHER_AUTH`` = ``auto``（默认）时先 ``X-QW-Api-Key``，401 再试 URL ``key=``。
 - **JWT**：控制台用 Ed25519 签发的 Token，填入 ``QWEATHER_BEARER_TOKEN``（``Authorization: Bearer …``），与 API KEY 互斥时优先 Bearer。
 
-401 且两种方式都试过仍失败：Key 错误、Token 过期、或 Host 与凭据不属于同一项目。开启 ``QWEATHER_DEBUG=1`` 会打印错误响应片段。
+401 且两种方式都试过仍失败：Key 错误、Token 过期、或 Host 与凭据不属于同一项目。开启 ``LLM_DEBUG=1`` 会打印错误响应片段。
 文档：https://dev.qweather.com/docs/configuration/authentication/
 """
 
@@ -21,11 +21,11 @@ from src.data.cities_config import CITY_TO_LOCATION_ID, MOCK_WEATHER
 
 
 def _weather_debug() -> bool:
-    return os.getenv("QWEATHER_DEBUG", "").strip().lower() in ("1", "true", "yes")
+    return os.getenv("LLM_DEBUG", "").strip().lower() in ("1", "true", "yes")
 
 
 def _dlog(msg: str) -> None:
-    """QWEATHER_DEBUG 时直接打到 stdout，避免 uvicorn 默认不展示第三方 logger.info。"""
+    """LLM_DEBUG 时直接打到 stdout，避免 uvicorn 默认不展示第三方 logger.info。"""
     print(f"[qweather] {msg}", flush=True)
 
 # CITY_TO_LOCATION_ID 由 config/cities.json 加载；其余城市走 /geo/v2/city/lookup 动态解析并缓存

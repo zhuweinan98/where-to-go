@@ -29,7 +29,7 @@ pip install -r requirements.txt
 
 ## 和风天气（可选）
 
-在 `.env` 中配置 `QWEATHER_HOST` 与 `QWEATHER_KEY`（控制台 **API KEY** 凭据）后，天气与「推荐」分支会按实况判断晴雨；未配置或请求失败时使用 Mock（失败时**不会**在界面报错，所以容易误以为没调 API）。可在 `.env` 加 **`QWEATHER_DEBUG=1`**，重启后在 **uvicorn 终端** 会打印以 `[qweather]` 开头的行（直接 stdout，不依赖 logging 配置）。说明见 [docs/技术方案.md](docs/技术方案.md) 中的「和风天气」一节。
+在 `.env` 中配置 `QWEATHER_HOST` 与 `QWEATHER_KEY`（控制台 **API KEY** 凭据）后，天气与「推荐」分支会按实况判断晴雨；未配置或请求失败时使用 Mock（失败时**不会**在界面报错，所以容易误以为没调 API）。可在 `.env` 加 **`LLM_DEBUG=1`**，重启后在 **uvicorn 终端** 会打印以 `[qweather]` 开头的行（直接 stdout，不依赖 logging 配置）。说明见 [docs/技术方案.md](docs/技术方案.md) 中的「和风天气」一节。
 
 ## 终端对话（Agent）
 
@@ -86,6 +86,5 @@ curl -s -X POST http://127.0.0.1:8000/chat \
    | `OPENAI_HTTP_TIMEOUT` | 可选，秒，默认 `120`。 |
    | `LLM_DEBUG` | 可选：设 `1` 可在 **Deploy Logs** 里看到 `[llm]` 调试行。 |
    | `QWEATHER_HOST` / `QWEATHER_KEY` | 可选：与本地相同，不配则天气回退 Mock。 |
-   | `QWEATHER_DEBUG` | 可选：设 `1` 在日志里打印 `[qweather]`。 |
 
    Railway 会自动注入 **`PORT`**，无需手写；也勿在变量里提交 `.env` 文件内容到 Git。

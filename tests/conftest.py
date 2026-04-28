@@ -8,4 +8,3 @@ os.environ["LLM_MODE"] = "off"
 os.environ["QWEATHER_HOST"] = ""
 os.environ["QWEATHER_KEY"] = ""
 os.environ["QWEATHER_BEARER_TOKEN"] = ""
-os.environ.pop("QWEATHER_DEBUG", None)
