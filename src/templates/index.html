@@ -263,42 +263,95 @@
     function formatTraceItem(item) {
       const ev = item?.event || 'unknown';
       if (ev === 'city_resolved') {
-        return `城市解析: 生效=${safe(item.effective_city)}`;
+        return `✅ 城市解析成功：使用城市=${safe(item.effective_city)}`;
       }
       if (ev === 'llm_route') {
-        return `路由: ${safe(item.client_kind)}`;
+        return `✅ 路由选择成功：${safe(item.client_kind)}`;
       }
       if (ev === 'fc_start') {
-        return `FC启动: mode=${safe(item.mode)} model=${safe(item.model)} base=${safe(item.base_url)} 默认城市=${safe(item.default_city)}`;
+        return `✅ FC启动成功：mode=${safe(item.mode)} model=${safe(item.model)} 默认城市=${safe(item.default_city)}`;
+      }
+      if (ev === 'rag_retrieved') {
+        return formatRagPayload(item);
+      }
+      if (ev === 'rag_skipped') {
+        return `ℹ️ RAG跳过：source=${safe(item.source)} reason=${safe(item.reason)}`;
       }
       if (ev === 'assistant_round') {
-        return `第${safe(item.round)}轮 assistant: tool_calls=${safe(item.tool_calls_count)} content=${safe(item.assistant_content)}`;
+        const c = Number(item.tool_calls_count || 0);
+        if (c > 0) {
+          return `⏳ 第${safe(item.round)}轮：模型决定调用工具（${c}个），等待工具结果`;
+        }
+        return `✅ 第${safe(item.round)}轮：模型直接给出回答（无工具调用）`;
       }
       if (ev === 'tool_call') {
-        return `调用工具: ${safe(item.name)} args=${safeJson(item.args)}`;
+        return `⏳ 调用工具：${safe(item.name)}，参数=${safeJson(item.args)}`;
       }
       if (ev === 'tool_result') {
-        return `工具结果: ${safe(item.name)} -> ${safe(item.result)}`;
+        return summarizeToolResult(item);
       }
       if (ev === 'tool_error' || ev === 'tool_exception') {
-        return `工具异常: ${safe(item.name)} -> ${safe(item.error)}`;
+        return `❌ 工具执行失败：${safe(item.name)}，原因=${safe(item.error)}`;
       }
       if (ev === 'final_answer') {
-        return `最终回答(第${safe(item.round)}轮): ${safe(item.content)}`;
+        return `✅ 最终回答生成成功（第${safe(item.round)}轮）：${safe(item.content)}`;
       }
       if (ev === 'llm_error') {
-        return `LLM错误: ${safe(item.error)}`;
+        return `❌ LLM调用失败：${safe(item.error)}`;
       }
       if (ev === 'rule_off') {
-        return '规则关闭: 当前为 LLM_MODE=off 兜底提示';
+        return '⚠️ 当前为规则关闭模式（LLM_MODE=off），返回兜底提示';
       }
       if (ev === 'max_rounds_reached') {
-        return `达到最大轮数: ${safe(item.max_rounds)}`;
+        return `⚠️ 达到最大轮数：${safe(item.max_rounds)}，已终止工具循环`;
       }
       if (ev === 'frontend_error') {
-        return `前端错误: ${safe(item.message)}`;
+        return `❌ 前端错误：${safe(item.message)}`;
       }
       return `${ev}: ${safeJson(item)}`;
+    }
+
+    function formatRagPayload(item) {
+      const hits = Array.isArray(item.hits) ? item.hits : [];
+      const top1 = hits[0];
+      const ok = String(item.rag_status || '').includes('ok') || String(item.retrieval_engine || '') === 'semantic';
+      const status = ok ? '✅' : '⚠️';
+      const header = `${status} RAG检索完成：query=${safe(item.query)} engine=${safe(item.retrieval_engine)} embedding=${safe(item.embedding_model || item.rag_config_model)} top_k=${safe(item.top_k)}`;
+      const top1Line = `Top1：${top1 ? `${safe(top1.name)}（score=${toScore(top1._score)}）` : '-'}`;
+      const top3Lines = hits.slice(0, 3).map((x, i) =>
+        `Top${i + 1}：${safe(x.name)}（score=${toScore(x._score)}，${safe(x.province)}${safe(x.modern_city)}）`
+      );
+      const hint = `说明：${safe(item.rag_hint)}`;
+      const ragLogs = Array.isArray(item.rag_debug_logs) && item.rag_debug_logs.length > 0
+        ? ['RAG日志：', ...item.rag_debug_logs.map((x) => `- ${safe(x)}`)]
+        : ['RAG日志：-', '（未采集到额外日志）'];
+      return [header, top1Line, ...top3Lines, hint, ...ragLogs].join('\n');
+    }
+
+    function toScore(v) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return '-';
+      return n.toFixed(3);
+    }
+
+    function summarizeToolResult(item) {
+      const name = safe(item.name);
+      let parsed = null;
+      try {
+        parsed = JSON.parse(item.result || 'null');
+      } catch (_) {
+        parsed = null;
+      }
+      if (Array.isArray(parsed)) {
+        const top1 = parsed[0];
+        const topName = top1 ? safe(top1.name) : '-';
+        const topScore = top1 ? toScore(top1._score) : '-';
+        return `✅ 工具执行成功：${name}，返回${parsed.length}条；Top1=${topName}(${topScore})`;
+      }
+      if (parsed && typeof parsed === 'object') {
+        return `✅ 工具执行成功：${name}，已返回结构化结果`;
+      }
+      return `✅ 工具执行成功：${name}`;
     }
 
     function safe(v) {
@@ -308,7 +361,7 @@
 
     function safeJson(v) {
       try {
-        return JSON.stringify(v, null, 0);
+        return JSON.stringify(v, null, 2);
       } catch (_) {
         return String(v);
       }

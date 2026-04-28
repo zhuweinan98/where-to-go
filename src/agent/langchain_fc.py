@@ -13,7 +13,12 @@ from langchain_core.tools import tool
 from langchain_openai import ChatOpenAI
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 
-from src.agent.agent_tools import get_weather_json, list_places_json
+from src.agent.agent_tools import (
+    get_weather_json,
+    list_places_json,
+    search_sanguo_places_json,
+    search_sanguo_places_with_meta,
+)
 
 
 def _llm_debug(msg: str) -> None:
@@ -28,8 +33,81 @@ def _fc_system_prompt(city: str) -> str:
         "你必须通过工具获取天气与景点数据：\n"
         "- 用户问天气、气温、下雨等 → 调用 get_weather\n"
         "- 用户问推荐、去哪玩、有什么地方 → 先 list_places 再结合 get_weather 做建议\n"
+        "- 若已提供「三国检索结果」上下文，优先基于该上下文回答，不要忽略\n"
+        "- 若无三国检索上下文，且用户问三国、蜀汉、曹操、赤壁等历史主题地点 → 调用 search_sanguo_places\n"
         "禁止编造工具结果中不存在的景点名称；景点名须与 list_places 返回的 name 字段完全一致。"
     )
+
+
+def _is_sanguo_query(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    keywords = (
+        "三国",
+        "蜀汉",
+        "曹操",
+        "刘备",
+        "诸葛亮",
+        "赤壁",
+        "武侯祠",
+        "白帝城",
+        "关羽",
+        "张飞",
+        "司马",
+        "魏国",
+        "吴国",
+    )
+    return any(k in t for k in keywords)
+
+
+def _build_sanguo_context(
+    user_text: str,
+) -> tuple[str, list[dict[str, Any]], list[str]]:
+    items, rag_logs = search_sanguo_places_with_meta(user_text)
+    if not isinstance(items, list):
+        return "", [], rag_logs
+    picked = items[:3]
+    if not picked:
+        return "", [], rag_logs
+    lines = []
+    for idx, x in enumerate(picked, start=1):
+        lines.append(
+            f"{idx}. {x.get('name', '')}（{x.get('province', '')}{x.get('modern_city', '')}）"
+            f" | 史实: {x.get('era_role', '')}"
+            f" | 标签: {','.join(x.get('tags', []))}"
+            f" | 游玩建议: {x.get('visit_hint', '')}"
+            f" | score={x.get('_score', 0)}"
+        )
+    ctx = "以下是三国知识库检索结果（仅可基于这些信息回答）：\n" + "\n".join(lines)
+    return ctx, picked, rag_logs
+
+
+def _rag_diag(engine: str, emb_model: str) -> dict[str, str]:
+    configured_mode = os.getenv("RAG_EMBEDDING_MODE", "auto").strip().lower() or "auto"
+    configured_model = os.getenv("RAG_EMBEDDING_MODEL", "").strip()
+    if engine == "semantic":
+        return {
+            "status": "semantic_ok",
+            "configured_mode": configured_mode,
+            "configured_model": configured_model,
+            "hint": "语义检索已生效。",
+        }
+    if configured_mode == "off":
+        hint = "已显式关闭 embedding（RAG_EMBEDDING_MODE=off），当前仅词法检索。"
+    elif emb_model:
+        hint = "已回退到词法检索。请查看后端 [rag] 日志中的 embedding 失败原因。"
+    else:
+        hint = (
+            "已回退到词法检索。若使用 Ollama，请先 pull embedding 模型并配置 "
+            "RAG_EMBEDDING_MODEL。"
+        )
+    return {
+        "status": "lexical_fallback",
+        "configured_mode": configured_mode,
+        "configured_model": configured_model,
+        "hint": hint,
+    }
 
 
 @tool
@@ -40,11 +118,17 @@ def get_weather(city: str) -> str:
 
 @tool
 def list_places(city: str, query: str = "") -> str:
-    """列出应用内该城市的去处（名称、类型、理由、票价等）。query 预留给语义检索，当前可传空字符串。"""
+    """列出应用内该城市的去处（名称、类型、理由、票价等）。当用户有偏好关键词时请填写 query 以检索 top-k。"""
     return list_places_json(city, query)
 
 
-_TOOLS = [get_weather, list_places]
+@tool
+def search_sanguo_places(query: str) -> str:
+    """检索三国历史主题地点（如赤壁、武侯祠、白帝城），用于历史文化向推荐。"""
+    return search_sanguo_places_json(query)
+
+
+_TOOLS = [get_weather, list_places, search_sanguo_places]
 _TOOL_MAP = {t.name: t for t in _TOOLS}
 _MAX_TOOL_ROUNDS = 8
 
@@ -164,8 +248,57 @@ def chat_with_tools(
     llm_tools = llm.bind_tools(_TOOLS)
     messages: list[Any] = [
         SystemMessage(content=_fc_system_prompt(city)),
-        HumanMessage(content=user_text.strip()),
     ]
+    text = user_text.strip()
+    if _is_sanguo_query(text):
+        rag_context, rag_hits, rag_logs = _build_sanguo_context(text)
+        if rag_context:
+            engine = str(rag_hits[0].get("_retrieval_engine", "")) if rag_hits else ""
+            emb_model = str(rag_hits[0].get("_embedding_model", "")) if rag_hits else ""
+            diag = _rag_diag(engine, emb_model)
+            _llm_debug(
+                f"[rag] 命中三国知识库 top_k={len(rag_hits)} "
+                f"engine={engine or '-'} embedding_model={emb_model or '-'} "
+                f"names={[x.get('name', '') for x in rag_hits]}"
+            )
+            _add_trace(
+                trace,
+                trace_hook,
+                "rag_retrieved",
+                source="sanguo_kb",
+                query=text,
+                top_k=len(rag_hits),
+                retrieval_engine=engine or "unknown",
+                embedding_model=emb_model or "",
+                rag_status=diag["status"],
+                rag_config_mode=diag["configured_mode"],
+                rag_config_model=diag["configured_model"],
+                rag_hint=diag["hint"],
+                rag_debug_logs=rag_logs,
+                hits=rag_hits,
+            )
+            messages.append(SystemMessage(content=rag_context))
+        else:
+            _llm_debug("[rag] 三国知识库检索为空，继续常规流程")
+            _add_trace(
+                trace,
+                trace_hook,
+                "rag_retrieved",
+                source="sanguo_kb",
+                query=text,
+                top_k=0,
+                rag_debug_logs=rag_logs,
+                hits=[],
+            )
+    else:
+        _add_trace(
+            trace,
+            trace_hook,
+            "rag_skipped",
+            source="sanguo_kb",
+            reason="query_not_sanguo",
+        )
+    messages.append(HumanMessage(content=text))
 
     try:
         for i in range(_MAX_TOOL_ROUNDS):
