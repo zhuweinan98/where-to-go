@@ -86,10 +86,6 @@ def _normalize_v1_base(url: str) -> str:
 
 def _embedding_client_info() -> dict[str, Any] | None:
     mode = os.getenv("LLM_MODE", "off").strip().lower()
-    force = os.getenv("RAG_EMBEDDING_MODE", "auto").strip().lower()
-    if force == "off":
-        _rag_debug("embedding 已关闭（RAG_EMBEDDING_MODE=off），将回退词法检索")
-        return None
     if mode == "openai":
         key = os.getenv("OPENAI_API_KEY", "").strip()
         if not key:
@@ -98,7 +94,7 @@ def _embedding_client_info() -> dict[str, Any] | None:
         base = _normalize_v1_base(
             os.getenv("OPENAI_BASE_URL", "https://api.openai.com")
         )
-        model = os.getenv("RAG_EMBEDDING_MODEL", "text-embedding-3-small").strip()
+        model = os.getenv("RAG_EMBEDDING_MODEL", "deepseek-embedding").strip()
         timeout = float(os.getenv("RAG_EMBEDDING_TIMEOUT", "30").strip() or "30")
         return {"api_key": key, "base_url": base, "model": model, "timeout": timeout}
     if mode == "ollama":
