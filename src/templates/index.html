@@ -17,9 +17,9 @@
       padding: 0 20px 40px;
       background: #f5f5f5;
     }
-    /* 开启 LLM_DEBUG 时加宽，便于左右双栏调试 */
+    /* 开启 LLM_DEBUG 时加宽：左侧对话区（消息+输入）整体，右侧双栏调试 */
     body.debug-wide {
-      max-width: 1040px;
+      max-width: 1200px;
     }
     h1 { font-size: 1.5rem; margin-bottom: 12px; }
     .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
@@ -39,6 +39,51 @@
       background: #fff;
       border-radius: 12px;
       margin-bottom: 12px;
+    }
+    /* 消息区 + 输入框：同一卡片（非 debug-wide 时单独占满宽；debug-wide 时与调试区并排） */
+    .main-with-debug {
+      margin-bottom: 0;
+    }
+    .chat-stack {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      background: #fff;
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .chat-stack .chat-box {
+      border: none;
+      border-radius: 0;
+      margin-bottom: 0;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .chat-stack-form {
+      margin: 0;
+      padding: 12px 16px;
+      background: #fafafa;
+    }
+    .chat-stack-form .row {
+      margin-bottom: 0;
+    }
+    body.debug-wide .main-with-debug {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: stretch;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    body.debug-wide .chat-stack {
+      flex: 1 1 320px;
+      min-width: 260px;
+      max-width: 100%;
+      margin-bottom: 0;
+    }
+    body.debug-wide .main-with-debug > .debug-panel {
+      flex: 1 1 360px;
+      min-width: 0;
+      margin-top: 0;
     }
     .user {
       color: #1890ff;
@@ -88,7 +133,6 @@
       border: 1px solid #ddd;
       border-radius: 12px;
       background: #fff;
-      margin-top: 12px;
       overflow: hidden;
     }
     .debug-panel summary {
@@ -206,29 +250,33 @@
     <button type="button" class="chip" data-msg="推荐去哪里玩">推荐去哪</button>
     <button type="button" class="chip" data-msg="下雨天推荐">雨天推荐</button>
   </div>
-  <div class="chat-box" id="chat"></div>
-  <form id="form">
-    <div class="row">
-      <input type="text" id="message" name="message" placeholder="问点什么…" autocomplete="off" />
-      <button type="submit" id="send">发送</button>
+  <div class="main-with-debug">
+    <div class="chat-stack">
+      <div class="chat-box" id="chat"></div>
+      <form id="form" class="chat-stack-form">
+        <div class="row">
+          <input type="text" id="message" name="message" placeholder="问点什么…" autocomplete="off" />
+          <button type="submit" id="send">发送</button>
+        </div>
+      </form>
     </div>
-  </form>
-  <div class="err" id="err" hidden></div>
-  <details class="debug-panel" id="debug-panel" open>
-    <summary>调试（最近一次请求）</summary>
-    <div class="debug-layout">
-      <div class="debug-col">
-        <div class="debug-col-title">事件时间线</div>
-        <pre class="debug-log" id="debug-log">暂无调试数据</pre>
-      </div>
-      <div class="debug-col">
-        <div class="debug-col-title">SystemMessage 原文</div>
-        <div class="debug-system-scroll" id="debug-system-panels">
-          发送一条消息后，若 trace 中含 <code>fc_invoke_system_messages</code>，此处按 slot 分块展示全文（换行保留）。
+    <details class="debug-panel" id="debug-panel" open>
+      <summary>调试（最近一次请求）</summary>
+      <div class="debug-layout">
+        <div class="debug-col">
+          <div class="debug-col-title">事件时间线</div>
+          <pre class="debug-log" id="debug-log">暂无调试数据</pre>
+        </div>
+        <div class="debug-col">
+          <div class="debug-col-title">SystemMessage 原文</div>
+          <div class="debug-system-scroll" id="debug-system-panels">
+            发送一条消息后，若 trace 中含 <code>fc_invoke_system_messages</code>，此处按 slot 分块展示全文（换行保留）。
+          </div>
         </div>
       </div>
-    </div>
-  </details>
+    </details>
+  </div>
+  <div class="err" id="err" hidden></div>
   <script>
     const chatEl = document.getElementById('chat');
     const form = document.getElementById('form');
