@@ -1,0 +1,40 @@
+---
+description: where-to-go 改动须同步可观测日志与 LLM_DEBUG 调试 trace
+alwaysApply: true
+---
+
+# 日志与调试 Trace（必跟）
+
+凡修改 **Agent / RAG / 天气 / Web 请求链** 相关逻辑（`src/agent/`、`src/data/rag_retriever.py`、`src/data/weather_source.py`、`src/web/app.py` 等），须同时满足：
+
+## 1. 终端可观测
+
+- 沿用项目惯例：**`LLM_DEBUG=1`** 时打印到 stdout（如 `[llm]`、`[rag]`、`[qweather]`），与现有 `_llm_debug` / `_rag_debug` 一致；**不要**只写 `logging` 却默认看不到。
+- RAG 路径：关键步骤用 **`_rag_debug`** 写入 `consume_rag_debug_logs()` 可消费的缓冲区（检索阶段、两阶段、异常分支）。
+
+## 2. 通俗中文 + 专业词（给人的日志）
+
+- **推荐句式**（与现有 **`fc_start`** 一致）：**`✅ 人话结论：term=value … 补充人话`**。例：`✅ FC启动成功：mode=ollama model=qwen3:4b 默认城市=盘锦` —— 既有 **mode / model** 等可对外的键，又有「启动成功」「默认城市」等可读说明。
+- **不要**整屏无结构参数；**要**在一句里 **带齐关键专业词**（如 **embedding、向量、余弦、top_k、rerank、tool_calls**），让读者知道底层做了什么；**少量 `key=value`** 点到为止即可。
+- **RAG / 检索**：口语里至少点明走的是 **embedding→向量** 还是 **关键词**，以及 **召回条数 / top_k** 之一；第二轮若有 **rerank**，用「规则 rerank / 轻量重排」等词呼应代码。
+- 前端 **`formatTraceItem` / `summarizeToolResult`**：首行尽量贴近 **`fc_start` 风格**；明细再用 **序号列表**，不要整段 JSON。
+- 若必须保留机器可读长日志：可 **双轨**（首行人话 + `key=value` + 术语；次行起可选 `*_VERBOSE`），**默认仍要短**。
+
+## 3. 前端调试面板（`debug_trace`）
+
+- 走 **`chat_with_tools`** 时：与用户可见行为相关的信息，应能通过 **`trace` / `trace_hook` → `_add_trace`** 进入 **`debug_trace`**（`POST /chat` 或 `/chat/stream` 在 `LLM_DEBUG` 开启时返回）。
+- **工具 `list_places` / `search_sanguo_places`**：工具执行后须 **`consume_rag_debug_logs()`** 并把非空列表挂到 **`tool_result.rag_debug_logs`**（见 `langchain_fc.py`），避免 RAG 只在终端有、面板没有。
+- 工具异常时：若上述工具可能已写 RAG 缓冲，**仍应 `consume`**，避免残留串话。
+
+## 4. 前端展示（`src/templates/index.html`）
+
+- 新增或扩展 **`debug_trace` 事件字段** 时，同步更新 **`formatTraceItem` / `summarizeToolResult`**（或等价函数），使调试面板可读；工具返回 JSON 的新增诊断字段（如 `_rerank_score`）若需在面板摘要，用**人话一句**说明即可，避免再堆参。
+- **`tool_result` 写入 trace 的 `result`**：若需前端 `JSON.parse`，注意 **截断长度足够**（或摘要与全文分离），避免面板只剩「工具成功」无上下文。
+
+## 5. 单测与 CI
+
+- 默认 **`LLM_MODE=off`** 的测试须仍能通过；若新逻辑依赖 embedding，用 **mock / 环境隔离** 或单独标记可选集成测，勿让 CI 依赖外网。
+
+## 6. 配置
+
+- **避免**为「永远应开启」的核心行为再增加 **总闸型环境变量**（如已移除的 `RAG_TWO_STAGE`）；可调参保留 **数值型**（如 `RAG_RETRIEVE_K`）、观测类（`LLM_DEBUG`）即可。

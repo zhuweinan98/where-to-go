@@ -17,6 +17,10 @@
       padding: 0 20px 40px;
       background: #f5f5f5;
     }
+    /* 开启 LLM_DEBUG 时加宽，便于左右双栏调试 */
+    body.debug-wide {
+      max-width: 1040px;
+    }
     h1 { font-size: 1.5rem; margin-bottom: 12px; }
     .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
     label { font-size: 0.9rem; color: #555; }
@@ -95,6 +99,31 @@
       background: #fafafa;
       border-bottom: 1px solid #f0f0f0;
     }
+    .debug-layout {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: stretch;
+    }
+    .debug-col {
+      flex: 1 1 300px;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #f0f0f0;
+    }
+    .debug-col:last-child {
+      border-right: none;
+    }
+    .debug-col-title {
+      padding: 8px 12px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: #8c8c8c;
+      text-transform: uppercase;
+      background: #fcfcfc;
+      border-bottom: 1px solid #f0f0f0;
+    }
     .debug-log {
       margin: 0;
       padding: 10px 12px;
@@ -102,9 +131,59 @@
       word-break: break-word;
       font-size: 12px;
       color: #262626;
-      max-height: 240px;
+      max-height: min(52vh, 420px);
       overflow-y: auto;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      line-height: 1.45;
+    }
+    .debug-system-scroll {
+      padding: 10px 12px 14px;
+      max-height: min(52vh, 420px);
+      overflow-y: auto;
+      background: #fff;
+    }
+    .system-panel-meta {
+      font-size: 11px;
+      color: #8c8c8c;
+      line-height: 1.5;
+      margin-bottom: 12px;
+      padding: 8px 10px;
+      background: #f6ffed;
+      border: 1px solid #d9f7be;
+      border-radius: 8px;
+    }
+    .sys-block {
+      margin-bottom: 14px;
+    }
+    .sys-block:last-child {
+      margin-bottom: 0;
+    }
+    .sys-block-hdr {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 11px;
+      font-weight: 600;
+      color: #434343;
+      margin: 0 0 6px 0;
+      padding: 4px 0;
+      border-bottom: 2px solid #1890ff;
+      display: inline-block;
+      max-width: 100%;
+    }
+    .sys-block-body {
+      margin: 0;
+      padding: 12px 14px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      font-size: 12px;
+      line-height: 1.55;
+      color: #262626;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: #fafafa;
+      border: 1px solid #f0f0f0;
+      border-radius: 10px;
+      max-height: min(36vh, 280px);
+      overflow-y: auto;
     }
   </style>
 </head>
@@ -136,8 +215,19 @@
   </form>
   <div class="err" id="err" hidden></div>
   <details class="debug-panel" id="debug-panel" open>
-    <summary>调试日志（最近一次请求）</summary>
-    <pre class="debug-log" id="debug-log">暂无调试数据</pre>
+    <summary>调试（最近一次请求）</summary>
+    <div class="debug-layout">
+      <div class="debug-col">
+        <div class="debug-col-title">事件时间线</div>
+        <pre class="debug-log" id="debug-log">暂无调试数据</pre>
+      </div>
+      <div class="debug-col">
+        <div class="debug-col-title">SystemMessage 原文</div>
+        <div class="debug-system-scroll" id="debug-system-panels">
+          发送一条消息后，若 trace 中含 <code>fc_invoke_system_messages</code>，此处按 slot 分块展示全文（换行保留）。
+        </div>
+      </div>
+    </div>
   </details>
   <script>
     const chatEl = document.getElementById('chat');
@@ -148,11 +238,13 @@
     const errEl = document.getElementById('err');
     const debugLogEl = document.getElementById('debug-log');
     const debugPanelEl = document.getElementById('debug-panel');
+    const debugSystemPanelsEl = document.getElementById('debug-system-panels');
     const LOADING_HINT = {{ llm_loading_hint_json | safe }};
     const INITIAL_MESSAGE = {{ initial_message_json | safe }};
     const INITIAL_CITY = {{ initial_city_json | safe }};
     const LLM_DEBUG_ENABLED = {{ llm_debug_enabled_json | safe }};
     if (!LLM_DEBUG_ENABLED) debugPanelEl.hidden = true;
+    if (LLM_DEBUG_ENABLED) document.body.classList.add('debug-wide');
 
     function showErr(msg) {
       errEl.textContent = msg;
@@ -251,6 +343,7 @@
       if (!Array.isArray(trace) || trace.length === 0) {
         debugLogEl.textContent = '暂无调试数据';
         debugLogEl.scrollTop = debugLogEl.scrollHeight;
+        renderSystemDebugPanel(null);
         return;
       }
       debugPanelEl.open = true;
@@ -258,52 +351,130 @@
         .map((item, idx) => `${String(idx + 1).padStart(2, '0')} | ${formatTraceItem(item)}`)
         .join('\n');
       debugLogEl.scrollTop = debugLogEl.scrollHeight;
+      renderSystemDebugPanel(trace);
+    }
+
+    /** 右侧栏：展示最近一次 fc_invoke_system_messages 里各 SystemMessage 全文，分块 + 独立滚动 */
+    function renderSystemDebugPanel(trace) {
+      if (!debugSystemPanelsEl) return;
+      if (!Array.isArray(trace) || trace.length === 0) {
+        debugSystemPanelsEl.textContent =
+          '暂无数据。开启 LLM_DEBUG 并走 LangChain FC 后，此处会显示 SystemMessage 分块原文。';
+        return;
+      }
+      const snaps = trace.filter((x) => x && x.event === 'fc_invoke_system_messages');
+      if (snaps.length === 0) {
+        debugSystemPanelsEl.textContent =
+          '本轮 trace 尚无 SystemMessage 快照（仅 ollama/openai + chat_with_tools 路径会写入 fc_invoke_system_messages）。';
+        return;
+      }
+      const item = snaps[snaps.length - 1];
+      const blocks = Array.isArray(item.system_blocks) ? item.system_blocks : [];
+      debugSystemPanelsEl.replaceChildren();
+
+      const meta = document.createElement('div');
+      meta.className = 'system-panel-meta';
+      const line1 = document.createElement('div');
+      const s1 = document.createElement('strong');
+      s1.textContent = '当前展示';
+      line1.appendChild(s1);
+      line1.appendChild(
+        document.createTextNode(
+          '：最后一次 invoke 前的快照（多轮 tool 时一般为 round 最大的一条）。'
+        )
+      );
+      const line2 = document.createElement('div');
+      line2.style.marginTop = '6px';
+      line2.style.fontFamily =
+        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+      line2.style.fontSize = '11px';
+      line2.style.color = '#595959';
+      line2.textContent = `round=${String(item.round ?? '-')} · total_messages=${String(item.total_messages ?? '-')} · roles=${String(item.roles ?? '-')}`;
+      meta.appendChild(line1);
+      meta.appendChild(line2);
+      debugSystemPanelsEl.appendChild(meta);
+
+      if (blocks.length === 0) {
+        const empty = document.createElement('p');
+        empty.style.margin = '0';
+        empty.style.fontSize = '12px';
+        empty.style.color = '#8c8c8c';
+        empty.textContent = '该快照中 system_blocks 为空。';
+        debugSystemPanelsEl.appendChild(empty);
+        return;
+      }
+
+      blocks.forEach((b, idx) => {
+        const section = document.createElement('section');
+        section.className = 'sys-block';
+        const hdr = document.createElement('h3');
+        hdr.className = 'sys-block-hdr';
+        hdr.textContent = `#${idx + 1}  ${safe(b.slot)}  ·  ${safe(b.chars)} 字`;
+        const pre = document.createElement('pre');
+        pre.className = 'sys-block-body';
+        const raw = b.full_text != null && String(b.full_text).length > 0 ? b.full_text : b.preview;
+        pre.textContent = raw != null && String(raw).length > 0 ? String(raw) : '（空）';
+        section.appendChild(hdr);
+        section.appendChild(pre);
+        debugSystemPanelsEl.appendChild(section);
+      });
     }
 
     function formatTraceItem(item) {
       const ev = item?.event || 'unknown';
       if (ev === 'city_resolved') {
-        return `✅ 城市解析成功：使用城市=${safe(item.effective_city)}`;
+        return `✅ 城市解析成功：effective_city=${safe(item.effective_city)}（来自表单或默认）`;
       }
       if (ev === 'llm_route') {
-        return `✅ 路由选择成功：${safe(item.client_kind)}`;
+        return `✅ 路由成功：client_kind=${safe(item.client_kind)} path=chat_with_tools（LangChain FC + tool_calls）`;
       }
       if (ev === 'fc_start') {
-        return `✅ FC启动成功：mode=${safe(item.mode)} model=${safe(item.model)} 默认城市=${safe(item.default_city)}`;
+        return (
+          `✅ FC启动成功：mode=${safe(item.mode)} model=${safe(item.model)} ` +
+          `base_url=${safe(item.base_url)} default_city=${safe(item.default_city)}`
+        );
       }
       if (ev === 'rag_retrieved') {
         return formatRagPayload(item);
       }
       if (ev === 'rag_skipped') {
-        return `ℹ️ RAG跳过：source=${safe(item.source)} reason=${safe(item.reason)}`;
+        return `ℹ️ 三国预检索跳过：source=${safe(item.source)} reason=${safe(item.reason)}（话里无三国关键词则不预查）`;
+      }
+      if (ev === 'fc_invoke_system_messages') {
+        const blocks = Array.isArray(item.system_blocks) ? item.system_blocks : [];
+        return (
+          `✅ invoke 前 SystemMessage：round=${safe(item.round)} blocks=${blocks.length} ` +
+          `total_messages=${safe(item.total_messages)} roles=${safe(item.roles)}（全文见右侧栏分块）`
+        );
       }
       if (ev === 'assistant_round') {
         const c = Number(item.tool_calls_count || 0);
         if (c > 0) {
-          return `⏳ 第${safe(item.round)}轮：模型决定调用工具（${c}个），等待工具结果`;
+          return `⏳ LLM round=${safe(item.round)}：tool_calls=${c}（Function Calling，等待工具返回）`;
         }
-        return `✅ 第${safe(item.round)}轮：模型直接给出回答（无工具调用）`;
+        return `✅ LLM round=${safe(item.round)}：tool_calls=0（无工具，本轮即最终生成）`;
       }
       if (ev === 'tool_call') {
-        return `⏳ 调用工具：${safe(item.name)}，参数=${safeJson(item.args)}`;
+        return `⏳ tool_call：round=${safe(item.round)} name=${safe(item.name)} args=${safeJson(item.args)}`;
       }
       if (ev === 'tool_result') {
         return summarizeToolResult(item);
       }
       if (ev === 'tool_error' || ev === 'tool_exception') {
-        return `❌ 工具执行失败：${safe(item.name)}，原因=${safe(item.error)}`;
+        const evn = ev === 'tool_exception' ? 'tool_exception' : 'tool_error';
+        return `❌ ${evn}：name=${safe(item.name)} round=${safe(item.round)} error=${safe(item.error)}`;
       }
       if (ev === 'final_answer') {
-        return `✅ 最终回答生成成功（第${safe(item.round)}轮）：${safe(item.content)}`;
+        return `✅ final_answer：round=${safe(item.round)} content=${safe(item.content)}`;
       }
       if (ev === 'llm_error') {
-        return `❌ LLM调用失败：${safe(item.error)}`;
+        return `❌ LLM 异常：phase=chat_with_tools error=${safe(item.error)}`;
       }
       if (ev === 'rule_off') {
-        return '⚠️ 当前为规则关闭模式（LLM_MODE=off），返回兜底提示';
+        return '⚠️ LLM_MODE=off：不请求模型，仅返回兜底提示（单测/CI 默认）';
       }
       if (ev === 'max_rounds_reached') {
-        return `⚠️ 达到最大轮数：${safe(item.max_rounds)}，已终止工具循环`;
+        return `⚠️ FC 终止：max_tool_rounds=${safe(item.max_rounds)}（防止 tool 死循环）`;
       }
       if (ev === 'frontend_error') {
         return `❌ 前端错误：${safe(item.message)}`;
@@ -313,19 +484,32 @@
 
     function formatRagPayload(item) {
       const hits = Array.isArray(item.hits) ? item.hits : [];
-      const top1 = hits[0];
-      const ok = String(item.rag_status || '').includes('ok') || String(item.retrieval_engine || '') === 'semantic';
-      const status = ok ? '✅' : '⚠️';
-      const header = `${status} RAG检索完成：query=${safe(item.query)} engine=${safe(item.retrieval_engine)} embedding=${safe(item.embedding_model || item.rag_config_model)} top_k=${safe(item.top_k)}`;
-      const top1Line = `Top1：${top1 ? `${safe(top1.name)}（score=${toScore(top1._score)}）` : '-'}`;
-      const top3Lines = hits.slice(0, 3).map((x, i) =>
-        `Top${i + 1}：${safe(x.name)}（score=${toScore(x._score)}，${safe(x.province)}${safe(x.modern_city)}）`
+      const isSanguo = String(item.source || '') === 'sanguo_kb';
+      const lib = isSanguo ? '三国知识库' : '资料';
+      const bySemantic =
+        String(item.rag_status || '').includes('ok') ||
+        String(item.retrieval_engine || '') === 'semantic';
+      const route = bySemantic ? 'semantic' : 'lexical';
+      const routeHuman = bySemantic
+        ? 'embedding→向量→余弦相似度'
+        : '关键词打分（无 embedding）';
+      const emb = safe(item.embedding_model || item.rag_config_model || '-');
+      const lines = [];
+      lines.push(
+        `✅ 预检索完成：库=${lib} query「${safe(item.query)}」 route=${route}（${routeHuman}） ` +
+          `top_k=${hits.length} embedding_model=${emb}，下列为前 3 条参考`
       );
-      const hint = `说明：${safe(item.rag_hint)}`;
-      const ragLogs = Array.isArray(item.rag_debug_logs) && item.rag_debug_logs.length > 0
-        ? ['RAG日志：', ...item.rag_debug_logs.map((x) => `- ${safe(x)}`)]
-        : ['RAG日志：-', '（未采集到额外日志）'];
-      return [header, top1Line, ...top3Lines, hint, ...ragLogs].join('\n');
+      hits.slice(0, 3).forEach((x, i) => {
+        const loc = [x.province, x.modern_city].filter(Boolean).join(' · ') || '—';
+        lines.push(`  ${i + 1}. ${safe(x.name)}（${safe(loc)}）`);
+      });
+      if (item.rag_hint) lines.push(`  提示：${safe(item.rag_hint)}`);
+      const ragLogs = Array.isArray(item.rag_debug_logs) ? item.rag_debug_logs : [];
+      if (ragLogs.length > 0) {
+        lines.push('  过程摘要：');
+        ragLogs.forEach((x) => lines.push(`  · ${safe(x)}`));
+      }
+      return lines.join('\n');
     }
 
     function toScore(v) {
@@ -336,6 +520,7 @@
 
     function summarizeToolResult(item) {
       const name = safe(item.name);
+      const rlogs = Array.isArray(item.rag_debug_logs) ? item.rag_debug_logs : [];
       let parsed = null;
       try {
         parsed = JSON.parse(item.result || 'null');
@@ -345,13 +530,30 @@
       if (Array.isArray(parsed)) {
         const top1 = parsed[0];
         const topName = top1 ? safe(top1.name) : '-';
-        const topScore = top1 ? toScore(top1._score) : '-';
-        return `✅ 工具执行成功：${name}，返回${parsed.length}条；Top1=${topName}(${topScore})`;
+        const rr =
+          top1 && top1._rerank_score != null && top1._rerank_score !== undefined;
+        let line = `✅ tool_result：tool=${name} rows=${parsed.length} top1=${topName} rerank=${
+          rr ? 'yes（轻量重排）' : 'no'
+        }`;
+        if (rlogs.length > 0) {
+          line += '\n' + rlogs.map((x) => `  · ${safe(x)}`).join('\n');
+        }
+        return line;
       }
       if (parsed && typeof parsed === 'object') {
-        return `✅ 工具执行成功：${name}，已返回结构化结果`;
+        let line = `✅ tool_result：tool=${name} shape=json_object`;
+        if (rlogs.length > 0) {
+          line += '\n' + rlogs.map((x) => `  · ${safe(x)}`).join('\n');
+        }
+        return line;
       }
-      return `✅ 工具执行成功：${name}`;
+      if (rlogs.length > 0) {
+        return (
+          `✅ tool_result：tool=${name} shape=raw（未解析为 JSON）\n` +
+          rlogs.map((x) => `  · ${safe(x)}`).join('\n')
+        );
+      }
+      return `✅ tool_result：tool=${name} shape=raw`;
     }
 
     function safe(v) {

@@ -4,6 +4,8 @@
 
 架构、Mock 与 **本地 Ollama** 的完整说明见 [docs/技术方案.md](docs/技术方案.md)（伙伴接手建议先读该文档）。
 
+改 **Agent / RAG / 天气 / 前端调试链** 时：请遵守 Cursor 规则 [`.cursor/rules/observability-and-debug-trace.mdc`](.cursor/rules/observability-and-debug-trace.mdc)（日志 + `debug_trace` + 面板摘要；**人话 + `key=value` + 术语**，对齐 `fc_start` 那种写法）；细则见 [docs/技术方案.md](docs/技术方案.md)「可观测性与调试」。
+
 ## 环境
 
 - Python 3.10+（推荐用 Homebrew 的 `python3.14` 建 venv）

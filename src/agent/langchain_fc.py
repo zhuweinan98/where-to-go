@@ -19,6 +19,7 @@ from src.agent.agent_tools import (
     search_sanguo_places_json,
     search_sanguo_places_with_meta,
 )
+from src.data.rag_retriever import consume_rag_debug_logs
 
 
 def _llm_debug(msg: str) -> None:
@@ -131,6 +132,8 @@ def search_sanguo_places(query: str) -> str:
 _TOOLS = [get_weather, list_places, search_sanguo_places]
 _TOOL_MAP = {t.name: t for t in _TOOLS}
 _MAX_TOOL_ROUNDS = 8
+# debug_trace 里 SystemMessage 全文上限（避免极端配置撑爆 JSON）
+_SYSTEM_FULL_TEXT_TRACE_CAP = 65536
 
 
 def _clip_text(s: Any, limit: int = 180) -> str:
@@ -138,6 +141,80 @@ def _clip_text(s: Any, limit: int = 180) -> str:
     if len(txt) <= limit:
         return txt
     return f"{txt[:limit]}...(len={len(txt)})"
+
+
+def _lc_message_role(msg: Any) -> str:
+    t = getattr(msg, "type", None)
+    if isinstance(t, str) and t:
+        return t
+    name = type(msg).__name__
+    if name.endswith("Message"):
+        return name[: -len("Message")].lower()
+    return name.lower()
+
+
+def _system_message_blocks(messages: list[Any]) -> list[dict[str, Any]]:
+    """当前 messages 里按出现顺序提取 SystemMessage，供每轮 invoke 前可观测。"""
+    sys_i = 0
+    blocks: list[dict[str, Any]] = []
+    for m in messages:
+        if _lc_message_role(m) != "system":
+            continue
+        sys_i += 1
+        body = str(getattr(m, "content", "") or "")
+        if sys_i == 1:
+            slot = "fc_system"
+        elif sys_i == 2:
+            slot = "sanguo_rag_system"
+        else:
+            slot = f"system_extra_{sys_i}"
+        full = (
+            body
+            if len(body) <= _SYSTEM_FULL_TEXT_TRACE_CAP
+            else _clip_text(body, _SYSTEM_FULL_TEXT_TRACE_CAP)
+        )
+        blocks.append(
+            {
+                "slot": slot,
+                "chars": len(body),
+                "preview": _clip_text(body, 3200),
+                "full_text": full,
+            }
+        )
+    return blocks
+
+
+def _emit_fc_invoke_system_snapshot(
+    round_no: int,
+    messages: list[Any],
+    trace: list[dict[str, Any]] | None,
+    trace_hook: Callable[[dict[str, Any]], None] | None,
+) -> None:
+    blocks = _system_message_blocks(messages)
+    roles = ",".join(_lc_message_role(m) for m in messages)
+    _add_trace(
+        trace,
+        trace_hook,
+        "fc_invoke_system_messages",
+        round=round_no,
+        total_messages=len(messages),
+        roles=roles,
+        system_blocks=blocks,
+    )
+    if not blocks:
+        _llm_debug(
+            f"✅ invoke 前：round={round_no} system_blocks=0 total_messages={len(messages)} "
+            f"roles={roles}（本轮无 SystemMessage，罕见）"
+        )
+        return
+    _llm_debug(
+        f"✅ invoke 前 SystemMessage 栈：round={round_no} system_blocks={len(blocks)} "
+        f"total_messages={len(messages)} roles={roles}"
+    )
+    for b in blocks:
+        _llm_debug(
+            f"  · slot={b['slot']} chars={b['chars']} preview={b['preview']}"
+        )
 
 
 def _add_trace(
@@ -227,7 +304,9 @@ def chat_with_tools(
         ollama_v1 = f"{ollama_v1}/v1"
 
     _llm_debug(
-        f"已走 LangChain FC，默认城市={city!r}（用户文本可覆盖），model={info['model']!r} → base_url={info['base_url']}"
+        "✅ FC 启动（LangChain + bind_tools）："
+        f"mode={info['mode']} model={info['model']} default_city={city!r} "
+        f"base_url={info['base_url']} max_tool_rounds={_MAX_TOOL_ROUNDS}"
     )
     _add_trace(
         trace,
@@ -256,10 +335,11 @@ def chat_with_tools(
             engine = str(rag_hits[0].get("_retrieval_engine", "")) if rag_hits else ""
             emb_model = str(rag_hits[0].get("_embedding_model", "")) if rag_hits else ""
             diag = _rag_diag(engine, emb_model)
+            hit_names = "、".join(str(x.get("name", "")) for x in rag_hits)
             _llm_debug(
-                f"[rag] 命中三国知识库 top_k={len(rag_hits)} "
-                f"engine={engine or '-'} embedding_model={emb_model or '-'} "
-                f"names={[x.get('name', '') for x in rag_hits]}"
+                "✅ 三国预检索命中（将注入 SystemMessage）："
+                f"top_k={len(rag_hits)} route={engine or 'unknown'} "
+                f"embedding_model={emb_model or '-'} hits={hit_names}"
             )
             _add_trace(
                 trace,
@@ -279,7 +359,9 @@ def chat_with_tools(
             )
             messages.append(SystemMessage(content=rag_context))
         else:
-            _llm_debug("[rag] 三国知识库检索为空，继续常规流程")
+            _llm_debug(
+                "ℹ️ 三国预检索：无可用上下文（hits=0），继续通用 FC（仅系统 Prompt + 用户话）"
+            )
             _add_trace(
                 trace,
                 trace_hook,
@@ -302,6 +384,7 @@ def chat_with_tools(
 
     try:
         for i in range(_MAX_TOOL_ROUNDS):
+            _emit_fc_invoke_system_snapshot(i + 1, messages, trace, trace_hook)
             ai: AIMessage = llm_tools.invoke(messages)
             messages.append(ai)
             _add_trace(
@@ -312,13 +395,16 @@ def chat_with_tools(
                 assistant_content=_clip_text(ai.content),
                 tool_calls_count=len(ai.tool_calls or []),
             )
-            _llm_debug(f"[fc] round={i + 1} assistant_content={_clip_text(ai.content)}")
+            n_tc = len(ai.tool_calls or [])
             _llm_debug(
-                f"[fc] round={i + 1} 模型返回 tool_calls 数量={len(ai.tool_calls or [])}（>0 表示将进入工具执行）"
+                f"⏳ LLM round={i + 1}：assistant 正文片段={_clip_text(ai.content)} "
+                f"tool_calls={n_tc}（Function Calling，>0 将执行工具）"
             )
             if not ai.tool_calls:
                 out = (ai.content or "").strip()
-                _llm_debug(f"[fc] round={i + 1} final={_clip_text(out)}")
+                _llm_debug(
+                    f"✅ LLM round={i + 1} 结束：无 tool_calls，final_answer={_clip_text(out)}"
+                )
                 _add_trace(
                     trace,
                     trace_hook,
@@ -340,14 +426,16 @@ def chat_with_tools(
                     id=tid,
                     args=args,
                 )
-                _llm_debug(f"[fc] tool_call name={name!r} id={tid!r} args={args}")
+                _llm_debug(
+                    f"⏳ tool_call：round={i + 1} name={name} id={tid} args={args}"
+                )
                 tool_fn = _TOOL_MAP.get(name)
                 if tool_fn is None:
                     payload = (
                         f'{{"error": "未知工具 {name!r}，仅允许: {list(_TOOL_MAP)}"}}'
                     )
                     _llm_debug(
-                        f"[fc] tool_error name={name!r} error={_clip_text(payload)}"
+                        f"❌ tool_error：round={i + 1} name={name} error={_clip_text(payload)}"
                     )
                     _add_trace(
                         trace,
@@ -361,21 +449,28 @@ def chat_with_tools(
                     continue
                 try:
                     result = tool_fn.invoke(args)
+                    rag_logs: list[str] = []
+                    if name in ("list_places", "search_sanguo_places"):
+                        rag_logs = consume_rag_debug_logs()
                     _llm_debug(
-                        f"[fc] tool_result name={name!r} result={_clip_text(result)}"
+                        f"✅ tool_result：round={i + 1} name={name} "
+                        f"bytes={len(str(result))} preview={_clip_text(result, 240)}"
                     )
-                    _add_trace(
-                        trace,
-                        trace_hook,
-                        "tool_result",
-                        round=i + 1,
-                        name=name,
-                        result=_clip_text(result),
-                    )
+                    tr_tool: dict[str, Any] = {
+                        "round": i + 1,
+                        "name": name,
+                        # 调试面板需完整 JSON 才能解析 TopN；与 LLM 上下文截断分离
+                        "result": _clip_text(result, limit=16000),
+                    }
+                    if rag_logs:
+                        tr_tool["rag_debug_logs"] = rag_logs
+                    _add_trace(trace, trace_hook, "tool_result", **tr_tool)
                 except Exception as e:
+                    if name in ("list_places", "search_sanguo_places"):
+                        consume_rag_debug_logs()
                     result = f'{{"error": "工具执行失败: {e}"}}'
                     _llm_debug(
-                        f"[fc] tool_exception name={name!r} error={_clip_text(result)}"
+                        f"❌ tool_exception：round={i + 1} name={name} error={_clip_text(result)}"
                     )
                     _add_trace(
                         trace,
