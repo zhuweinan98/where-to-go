@@ -10,8 +10,9 @@ venv/
 .vscode/
 .idea/
 
-# Data (keep mock in repo)
+# Data（忽略本地/私密 json；三国知识库默认文件纳入版本控制）
 data/*.json
+!data/sanguo_places.json
 
 # OS
 .DS_Store

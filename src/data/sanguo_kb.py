@@ -1,48 +1,42 @@
-"""三国主题知识库（演示版，可持续扩展）。"""
+"""三国主题知识库：从外置 JSON 加载（默认同仓库 ``data/sanguo_places.json``）。
+
+可通过环境变量 ``SANGUO_KB_JSON`` 指定绝对或相对路径，便于多套数据或单测临时文件。
+"""
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
 from typing import Any
 
-SANGUO_PLACES: list[dict[str, Any]] = [
-    {
-        "name": "赤壁古战场",
-        "modern_city": "咸宁",
-        "province": "湖北",
-        "era_role": "孙刘联军火攻曹操关键战场",
-        "tags": ["赤壁之战", "周瑜", "曹操", "江景"],
-        "visit_hint": "建议晴天傍晚去江边栈道，景区较大可预留半天。",
-    },
-    {
-        "name": "武侯祠",
-        "modern_city": "成都",
-        "province": "四川",
-        "era_role": "纪念诸葛亮及蜀汉人物",
-        "tags": ["诸葛亮", "蜀汉", "刘备", "文化古迹"],
-        "visit_hint": "可与锦里连线游览，适合历史文化深度游。",
-    },
-    {
-        "name": "白帝城",
-        "modern_city": "重庆",
-        "province": "重庆",
-        "era_role": "刘备托孤之地",
-        "tags": ["托孤", "刘备", "三峡", "瞿塘峡"],
-        "visit_hint": "推荐和三峡游船行程组合，注意山路台阶。",
-    },
-    {
-        "name": "襄阳古城",
-        "modern_city": "襄阳",
-        "province": "湖北",
-        "era_role": "荆襄要地，魏蜀吴争夺核心",
-        "tags": ["荆州", "关羽", "战略要冲", "古城墙"],
-        "visit_hint": "古城墙风大，春秋季体验更佳。",
-    },
-    {
-        "name": "许昌曹魏故城遗址",
-        "modern_city": "许昌",
-        "province": "河南",
-        "era_role": "曹魏政权核心活动区域",
-        "tags": ["曹操", "曹魏", "都城", "遗址"],
-        "visit_hint": "适合搭配许昌博物馆，先看展再看遗址更有代入感。",
-    },
-]
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent.parent.parent
+
+
+def _default_json_path() -> Path:
+    return _project_root() / "data" / "sanguo_places.json"
+
+
+def _load_sanguo_places() -> list[dict[str, Any]]:
+    raw = os.getenv("SANGUO_KB_JSON", "").strip()
+    path = Path(raw).expanduser() if raw else _default_json_path()
+    if not path.is_file():
+        raise FileNotFoundError(
+            "三国知识库 JSON 不存在: "
+            f"{path.resolve()}（默认应为仓库 data/sanguo_places.json；"
+            "或设置环境变量 SANGUO_KB_JSON 指向自定义文件）"
+        )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError(f"三国知识库 JSON 根类型须为数组: {path}")
+    out: list[dict[str, Any]] = []
+    for i, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"三国知识库 JSON 第 {i} 条不是对象: {path}")
+        out.append(dict(item))
+    return out
+
+
+SANGUO_PLACES: list[dict[str, Any]] = _load_sanguo_places()
