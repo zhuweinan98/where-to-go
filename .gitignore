@@ -13,8 +13,7 @@ venv/
 # Data（忽略本地/私密 json；三国知识库默认文件纳入版本控制）
 data/*.json
 !data/sanguo_places.json
-# 演义切块输出（体积大，本地生成：python3 scripts/build_sanguoyanyi_chunks.py）
-data/kb/*.jsonl
+# 演义切块 jsonl：学习阶段可进 Git；体积变大后可再改为忽略 data/kb/*.jsonl
 # 原文 txt 体积大，放本地 data/raw/ 即可（目录用 .gitkeep 占位）
 data/raw/*.txt
 
