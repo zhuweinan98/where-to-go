@@ -557,6 +557,17 @@
         lines.push('  过程摘要：');
         ragLogs.forEach((x) => lines.push(`  · ${safe(x)}`));
       }
+      const romHits = Array.isArray(item.romance_hits) ? item.romance_hits : [];
+      if (romHits.length > 0) {
+        lines.push(
+          `  演义摘录：top_k=${romHits.length}（词法 jsonl，chunk_id+回目+节选长度）`
+        );
+        romHits.forEach((x, i) => {
+          lines.push(
+            `  ${i + 1}. ${safe(x.chapter_title)} id=${safe(x.chunk_id)} excerpt_len=${safe(x.excerpt_len)}`
+          );
+        });
+      }
       return lines.join('\n');
     }
 
@@ -574,6 +585,15 @@
         parsed = JSON.parse(item.result || 'null');
       } catch (_) {
         parsed = null;
+      }
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.places)) {
+        const rows = parsed.places.length;
+        const rom = Array.isArray(parsed.romance_excerpts) ? parsed.romance_excerpts : [];
+        let line = `✅ tool_result：tool=${name} places=${rows} romance_excerpts=${rom.length}（演义词法摘录+chunk）`;
+        if (rlogs.length > 0) {
+          line += '\n' + rlogs.map((x) => `  · ${safe(x)}`).join('\n');
+        }
+        return line;
       }
       if (Array.isArray(parsed)) {
         const top1 = parsed[0];

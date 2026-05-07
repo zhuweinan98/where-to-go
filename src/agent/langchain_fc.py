@@ -36,6 +36,15 @@ def _fc_system_prompt(city: str) -> str:
         "- 用户问推荐、去哪玩、有什么地方 → 先 list_places 再结合 get_weather 做建议\n"
         "- 若已提供「三国检索结果」上下文，优先基于该上下文回答，不要忽略\n"
         "- 若无三国检索上下文，且用户问三国、蜀汉、曹操、赤壁等历史主题地点 → 调用 search_sanguo_places\n"
+        "- search_sanguo_places 返回 JSON 含 places（结构化景点）与 romance_excerpts（演义节选）；"
+        "推荐理由须基于 places 字段；与 places 冲突时以 places 为准。\n"
+        "【硬性·三国/演义】满足任一即须遵守：用户话含三国相关词；或本对话已注入三国知识库 System；或你已调用 search_sanguo_places 并收到 tool 结果。\n"
+        "1）若 romance_excerpts 非空，或 System 内已有「[演义摘录」段落：最终回复正文必须含恰好一行 "
+        "【演义原文】「……」——引号内须为 excerpt 正文中连续原字照抄 30～120 个汉字（禁止意译改写后再套引号），"
+        "同一行末尾括号内写明该条 chapter_title 与 chunk_id（与 JSON/System 中一致）。\n"
+        "2）若 romance_excerpts 为空且 System 中亦无演义摘录块：必须写一行 "
+        "【演义原文】本轮未检索到节选，推荐仅据 places。\n"
+        "3）推荐结论以 places 为准；「演义原文」行不得与 places 地名矛盾，矛盾时仍以 places 为准，但仍须完成(1)或(2)。\n"
         "禁止编造工具结果中不存在的景点名称；景点名须与 list_places 返回的 name 字段完全一致。"
     )
 
@@ -64,13 +73,13 @@ def _is_sanguo_query(text: str) -> bool:
 
 def _build_sanguo_context(
     user_text: str,
-) -> tuple[str, list[dict[str, Any]], list[str]]:
-    items, rag_logs = search_sanguo_places_with_meta(user_text)
+) -> tuple[str, list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    items, rag_logs, romance = search_sanguo_places_with_meta(user_text)
     if not isinstance(items, list):
-        return "", [], rag_logs
+        return "", [], rag_logs, romance if isinstance(romance, list) else []
     picked = items[:3]
     if not picked:
-        return "", [], rag_logs
+        return "", [], rag_logs, romance if isinstance(romance, list) else []
     lines = []
     for idx, x in enumerate(picked, start=1):
         lines.append(
@@ -81,7 +90,25 @@ def _build_sanguo_context(
             f" | score={x.get('_score', 0)}"
         )
     ctx = "以下是三国知识库检索结果（仅可基于这些信息回答）：\n" + "\n".join(lines)
-    return ctx, picked, rag_logs
+    if not romance and picked:
+        ctx += (
+            "\n\n【硬性】本轮未附上《演义》节选（词法未命中或 jsonl 不可用）。"
+            "最终用户可见回复须含一行：【演义原文】本轮未检索到节选，推荐仅据 places。"
+        )
+    if romance:
+        rlines = []
+        for i, r in enumerate(romance, start=1):
+            ct = str(r.get("chapter_title", "") or "")
+            cid = str(r.get("chunk_id", "") or "")
+            ex = str(r.get("excerpt", "") or "")
+            rlines.append(f"[演义摘录{i}] {ct}（{cid}）\n{ex}")
+        ctx += (
+            "\n\n以下为《三国演义》原文节选（词法检索 jsonl）。"
+            "地点与游玩信息以「三国知识库」上表为准；"
+            "你须在最终用户回复中按 fc_system 硬性规定写出「【演义原文】」行，从下列摘录中照抄 30～120 字：\n\n"
+            + "\n\n".join(rlines)
+        )
+    return ctx, picked, rag_logs, romance
 
 
 def _rag_diag(engine: str, emb_model: str) -> dict[str, str]:
@@ -125,7 +152,7 @@ def list_places(city: str, query: str = "") -> str:
 
 @tool
 def search_sanguo_places(query: str) -> str:
-    """检索三国历史主题地点（如赤壁、武侯祠、白帝城），用于历史文化向推荐。"""
+    """检索三国历史主题地点：返回 JSON（places + romance_excerpts）。收到后须在回复中按系统硬性规定写出「【演义原文】」行。"""
     return search_sanguo_places_json(query)
 
 
@@ -330,16 +357,25 @@ def chat_with_tools(
     ]
     text = user_text.strip()
     if _is_sanguo_query(text):
-        rag_context, rag_hits, rag_logs = _build_sanguo_context(text)
+        rag_context, rag_hits, rag_logs, romance_hits = _build_sanguo_context(text)
         if rag_context:
             engine = str(rag_hits[0].get("_retrieval_engine", "")) if rag_hits else ""
             emb_model = str(rag_hits[0].get("_embedding_model", "")) if rag_hits else ""
             diag = _rag_diag(engine, emb_model)
             hit_names = "、".join(str(x.get("name", "")) for x in rag_hits)
+            rom_trace = [
+                {
+                    "chunk_id": str(x.get("chunk_id", "")),
+                    "chapter_title": str(x.get("chapter_title", "")),
+                    "excerpt_len": len(str(x.get("excerpt", "") or "")),
+                }
+                for x in (romance_hits or [])
+            ]
             _llm_debug(
                 "✅ 三国预检索命中（将注入 SystemMessage）："
                 f"top_k={len(rag_hits)} route={engine or 'unknown'} "
-                f"embedding_model={emb_model or '-'} hits={hit_names}"
+                f"embedding_model={emb_model or '-'} hits={hit_names} "
+                f"romance_excerpts={len(rom_trace)}"
             )
             _add_trace(
                 trace,
@@ -356,6 +392,7 @@ def chat_with_tools(
                 rag_hint=diag["hint"],
                 rag_debug_logs=rag_logs,
                 hits=rag_hits,
+                romance_hits=rom_trace,
             )
             messages.append(SystemMessage(content=rag_context))
         else:
@@ -371,6 +408,7 @@ def chat_with_tools(
                 top_k=0,
                 rag_debug_logs=rag_logs,
                 hits=[],
+                romance_hits=[],
             )
     else:
         _add_trace(

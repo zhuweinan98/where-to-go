@@ -14,6 +14,7 @@ from src.data.rag_retriever import (
     search_places,
     search_sanguo_places,
 )
+from src.data.sanguoyanyi_retriever import search_romance_excerpts
 from src.data.weather_source import get_weather_for_city
 
 
@@ -37,16 +38,25 @@ def list_places_json(city: str, query: str = "") -> str:
 
 
 def search_sanguo_places_json(query: str) -> str:
-    """检索三国主题知识库，返回与 query 最相关的地理点位。"""
-    places, _ = search_sanguo_places_with_meta(query)
-    return json.dumps(places, ensure_ascii=False)
+    """检索三国主题知识库：places 为结构化景点；romance_excerpts 为《演义》词法摘录（chunk_id+回目+节选）。"""
+    places, _, romance = search_sanguo_places_with_meta(query)
+    return json.dumps(
+        {"places": places, "romance_excerpts": romance},
+        ensure_ascii=False,
+    )
 
 
 def search_sanguo_places_with_meta(
     query: str,
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """检索三国知识库并返回调试日志（用于前端调试面板）。"""
+) -> tuple[list[dict[str, Any]], list[str], list[dict[str, Any]]]:
+    """检索三国知识库；并同路径拉取演义 jsonl 摘录。返回 (places, rag_debug_logs, romance_excerpts)。"""
     q = (query or "").strip()
     places = search_sanguo_places(q, top_k=3)
     logs = consume_rag_debug_logs()
-    return places, logs
+    if places:
+        names = [str(p.get("name", "")) for p in places]
+        romance = search_romance_excerpts(q, names, top_k=2)
+        logs.extend(consume_rag_debug_logs())
+    else:
+        romance = []
+    return places, logs, romance

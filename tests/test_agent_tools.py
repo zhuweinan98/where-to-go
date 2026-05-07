@@ -43,6 +43,8 @@ def test_list_places_query_adds_retrieval_score():
 def test_search_sanguo_places_json_hits_chibi():
     raw = search_sanguo_places_json("赤壁 曹操")
     data = json.loads(raw)
-    assert isinstance(data, list)
-    names = {p["name"] for p in data}
+    assert isinstance(data, dict)
+    assert "places" in data and "romance_excerpts" in data
+    assert isinstance(data["romance_excerpts"], list)
+    names = {p["name"] for p in data["places"]}
     assert "赤壁古战场" in names
